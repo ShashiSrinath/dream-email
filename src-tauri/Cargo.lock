@@ -1447,6 +1447,7 @@ dependencies = [
  "dotenvy",
  "email-lib",
  "hex",
+ "imap-client",
  "keyring",
  "log",
  "oauth-lib",

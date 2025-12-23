@@ -1,4 +1,5 @@
 use crate::email_backend::accounts::commands::{login_with_google, get_accounts, remove_account};
+use crate::email_backend::emails::commands::{get_emails, get_folders};
 use crate::email_backend::sync::SyncEngine;
 use sqlx::sqlite::{SqlitePool, SqliteConnectOptions};
 use tauri::{AppHandle, Manager};
@@ -52,7 +53,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![login_with_google, get_accounts, remove_account])
+        .invoke_handler(tauri::generate_handler![login_with_google, get_accounts, remove_account, get_emails, get_folders])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

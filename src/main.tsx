@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client";
 import { TrayIcon } from '@tauri-apps/api/tray';
 import { defaultWindowIcon } from '@tauri-apps/api/app';
 import {Menu} from "@tauri-apps/api/menu/menu";
-import {invoke} from "@tauri-apps/api/core";
 
 // Import the generated route tree
 import { routeTree } from './routeTree.gen'
@@ -19,13 +18,11 @@ async function initSystray() {
         ],
     });
 
-    const tray = await TrayIcon.new({
+    await TrayIcon.new({
         icon: (await defaultWindowIcon())!,
         tooltip: "Dream Email",
         menu
     });
-
-    //await invoke("my_async_command", {input: "fake"})
 }
 
 initSystray().then(() => {

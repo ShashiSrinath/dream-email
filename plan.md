@@ -8,35 +8,35 @@ Act as a desktop email client with **multiple inboxes in the same view** (Unifie
 
 ---
 
-## Phase 1: Authentication & Account Foundation (Current)
+## Phase 1: Authentication & Account Foundation (Complete)
 
 - [x] **Complete Google OAuth Flow**: Finalize the Rust-side OAuth2 handshake and token exchange.
 - [x] **Secure Storage**: Implement secure storage for Refresh Tokens (using `keyring` and Tauri's Stronghold).
 - [x] **Multi-Account Manager**: Create a backend registry to manage multiple configured accounts (IMAP/SMTP/OAuth).
 - [x] **Account Management UI**: Allow users to add, edit, and remove multiple Google/IMAP accounts.
 
-## Phase 2: Data Architecture & Sync
+## Phase 2: Data Architecture & Sync (Complete)
 
 - [x] **Local Database (SQLite)**: Set up a local cache using SQLite to ensure the UI remains snappy even with thousands of emails.
-- [ ] **Sync Engine**:
+- [x] **Sync Engine**:
   - [x] Implement background IMAP fetching using `email-lib`.
-  - [ ] IDLE support for real-time push notifications/updates.
-  - [ ] Incremental sync to minimize bandwidth.
+  - [x] IDLE support for real-time push notifications/updates.
+  - [x] Incremental sync to minimize bandwidth.
 - [x] **Unified Schema**: Design a database schema that indexes emails from different providers into a single searchable table.
 
-## Phase 3: The Unified Inbox UI
+## Phase 3: The Unified Inbox UI (In Progress)
 
-- [ ] **Sidebar Navigation**:
-  - "Unified Inbox" (All accounts).
-  - Individual account folders.
-  - Smart Folders (Unread, Flagged, etc.).
-- [ ] **Message List View**:
-  - Virtual scrolling for high performance.
-  - Multi-select actions.
-  - Account indicators (visual cues for which inbox an email belongs to).
-- [ ] **Email Detail View**:
-  - Sanitized HTML rendering.
-  - Attachment handling.
+- [x] **Sidebar Navigation**:
+  - [x] "Unified Inbox" (All accounts).
+  - [x] Individual account folders (fetched dynamically).
+  - [ ] Smart Folders (Unread, Flagged, etc.).
+- [x] **Message List View**:
+  - [ ] Virtual scrolling for high performance.
+  - [ ] Multi-select actions.
+  - [x] Account indicators (visual cues for which inbox an email belongs to).
+- [x] **Email Detail View**:
+  - [ ] Sanitized HTML rendering.
+  - [ ] Attachment handling.
 
 ## Phase 4: Sending & Composition
 

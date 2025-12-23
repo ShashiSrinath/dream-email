@@ -1,40 +1,51 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { Button } from "@/components/ui/button.tsx";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Gmail } from "@/components/ui/svgs/gmail.tsx";
-import { Trash2, Plus, Mail, Settings2, ShieldCheck } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { format } from "date-fns";
+import { Mail, User, Clock } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { z } from "zod";
 
-export const Route = createFileRoute("/")({
-  component: App,
+const inboxSearchSchema = z.object({
+  accountId: z.number().optional(),
+  folderId: z.number().optional(),
 });
 
-type Account = {
-  type: "google";
-  data: {
-    email: string;
-    name?: string;
-    picture?: string;
-  };
+export const Route = createFileRoute("/")({
+  validateSearch: inboxSearchSchema,
+  component: InboxView,
+});
+
+type Email = {
+  id: number;
+  account_id: number;
+  folder_id: number;
+  remote_id: string;
+  message_id: string | null;
+  subject: string | null;
+  sender_name: string | null;
+  sender_address: string;
+  date: string;
+  flags: string;
 };
 
-function App() {
-  const [accounts, setAccounts] = useState<Account[]>([]);
+function InboxView() {
+  const { accountId, folderId } = Route.useSearch();
+  const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
 
-  const fetchAccounts = async () => {
+  const fetchEmails = async () => {
     try {
-      const data = await invoke<Account[]>("get_accounts");
-      setAccounts(data);
+      setLoading(true);
+      const data = await invoke<Email[]>("get_emails", { 
+        accountId: accountId || null, 
+        folderId: folderId || null 
+      });
+      setEmails(data);
     } catch (error) {
       console.error(error);
     } finally {
@@ -43,161 +54,117 @@ function App() {
   };
 
   useEffect(() => {
-    fetchAccounts();
-  }, []);
+    fetchEmails();
 
-  const handleRemove = async (index: number) => {
-    try {
-      await invoke("remove_account", { index });
-      fetchAccounts();
-    } catch (error) {
-      console.error(error);
-    }
-  };
+    // Listen for updates from backend
+    const unlisten = listen("emails-updated", () => {
+      fetchEmails();
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [accountId, folderId]);
+
+  const selectedEmail = emails.find((e) => e.id === selectedEmailId);
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-4xl mx-auto p-8 space-y-8">
-        <header className="flex justify-between items-end">
-          <div className="space-y-1">
-            <h1 className="text-4xl font-extrabold tracking-tight">Settings</h1>
-            <p className="text-muted-foreground">
-              Manage your email accounts and preferences.
-            </p>
-          </div>
-          <Button asChild size="lg" className="rounded-full shadow-lg">
-            <Link to="/accounts/new-account">
-              <Plus className="mr-2 h-5 w-5" /> Add Account
-            </Link>
-          </Button>
-        </header>
-
-        <Separator />
-
-        <div className="space-y-6">
-          <div className="flex items-center gap-2 text-lg font-semibold">
-            <Mail className="h-5 w-5 text-primary" />
-            <h2>Connected Accounts</h2>
-            <Badge variant="secondary" className="ml-2">
-              {accounts.length}
-            </Badge>
-          </div>
-
-          <div className="grid gap-4">
-            {loading ? (
-              <div className="h-32 flex items-center justify-center border rounded-xl border-dashed">
-                <p className="text-muted-foreground animate-pulse">
-                  Loading accounts...
-                </p>
-              </div>
-            ) : accounts.length === 0 ? (
-              <Card className="border-dashed shadow-none">
-                <CardContent className="flex flex-col items-center justify-center py-12 space-y-4">
-                  <div className="p-4 bg-muted rounded-full">
-                    <Mail className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                  <div className="text-center space-y-1">
-                    <p className="text-lg font-medium">No accounts connected</p>
-                    <p className="text-sm text-muted-foreground">
-                      Connect your first email account to get started.
-                    </p>
-                  </div>
-                  <Button variant="outline" asChild>
-                    <Link to="/accounts/new-account">Connect Account</Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              accounts.map((account, i) => (
-                <Card
-                  key={i}
-                  className="group overflow-hidden border-muted hover:border-primary/50 transition-all duration-300 shadow-sm hover:shadow-md"
-                >
-                  <CardHeader className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-4">
-                        <div className="relative group-hover:scale-110 transition-transform duration-300">
-                          {account.data.picture ? (
-                            <img
-                              src={account.data.picture}
-                              alt={account.data.name || account.data.email}
-                              className="h-12 w-12 rounded-xl object-cover border shadow-sm"
-                            />
-                          ) : (
-                            <div className="p-3 bg-background border rounded-xl shadow-sm">
-                              {account.type === "google" ? (
-                                <Gmail className="h-6 w-6" />
-                              ) : (
-                                <Mail className="h-6 w-6" />
-                              )}
-                            </div>
-                          )}
-                          <div className="absolute -bottom-1 -right-1 bg-background rounded-full p-0.5 border shadow-sm">
-                            {account.type === "google" && (
-                              <Gmail className="h-3 w-3" />
-                            )}
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <CardTitle className="text-xl">
-                              {account.data.name || account.data.email}
-                            </CardTitle>
-                            <Badge
-                              variant="outline"
-                              className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 gap-1"
-                            >
-                              <ShieldCheck className="h-3 w-3" /> Connected
-                            </Badge>
-                          </div>
-                          <p className="text-sm text-muted-foreground font-medium">
-                            {account.data.email}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <Settings2 className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onClick={() => handleRemove(i)}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" /> Remove Account
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-                  </CardHeader>
-                </Card>
-              ))
+    <div className="flex h-screen overflow-hidden">
+      {/* Email List */}
+      <div className="w-1/3 border-r flex flex-col bg-muted/10">
+        <div className="p-4 border-b bg-background flex justify-between items-center h-16 shrink-0">
+          <h1 className="text-xl font-bold">
+            {folderId ? "Folder" : accountId ? "Account" : "Unified Inbox"}
+          </h1>
+          <Badge variant="secondary">{emails.length}</Badge>
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="flex flex-col">
+            {loading && emails.length === 0 && (
+               <div className="p-8 text-center text-muted-foreground animate-pulse">
+                 Loading emails...
+               </div>
             )}
-          </div>
-        </div>
-
-        <div className="pt-8">
-          <Card className="bg-muted/30 border-none shadow-none">
-            <CardContent className="p-6 flex items-center justify-between">
-              <div className="space-y-1">
-                <p className="font-medium">Need help?</p>
-                <p className="text-sm text-muted-foreground">
-                  Check our documentation for setting up custom IMAP/SMTP
-                  accounts.
-                </p>
+            {!loading && emails.length === 0 && (
+              <div className="p-8 text-center text-muted-foreground">
+                <Mail className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                <p>No emails found</p>
               </div>
-              <Button variant="link">View Docs</Button>
-            </CardContent>
-          </Card>
-        </div>
+            )}
+            {emails.map((email) => {
+              const isUnread = !email.flags.includes("\Seen");
+              return (
+                <button
+                  key={email.id}
+                  onClick={() => setSelectedEmailId(email.id)}
+                  className={cn(
+                    "flex flex-col gap-1 p-4 text-left border-b transition-colors hover:bg-muted/50",
+                    selectedEmailId === email.id && "bg-muted",
+                    isUnread && "bg-blue-50/30 font-semibold"
+                  )}
+                >
+                  <div className="flex justify-between items-start">
+                    <span className={cn("font-medium truncate text-sm", isUnread && "text-primary font-bold")}>
+                      {email.sender_name || email.sender_address}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap ml-2">
+                      {format(new Date(email.date), "MMM d")}
+                    </span>
+                  </div>
+                  <div className={cn("text-xs truncate", isUnread && "text-foreground")}>
+                    {email.subject || "(No Subject)"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      </div>
+
+      {/* Email Content */}
+      <div className="flex-1 flex flex-col bg-background">
+        {selectedEmail ? (
+          <div className="flex flex-col h-full">
+            <div className="p-6 border-b space-y-4">
+              <h2 className="text-2xl font-bold">{selectedEmail.subject || "(No Subject)"}</h2>
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                  <User className="w-6 h-6" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold block truncate">
+                      {selectedEmail.sender_name}
+                    </span>
+                    <span className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {format(new Date(selectedEmail.date), "PPP p")}
+                    </span>
+                  </div>
+                  <span className="text-sm text-muted-foreground block truncate">
+                    &lt;{selectedEmail.sender_address}&gt;
+                  </span>
+                </div>
+              </div>
+            </div>
+            <ScrollArea className="flex-1 p-8">
+              <div className="max-w-3xl mx-auto">
+                <div className="p-12 border-2 border-dashed rounded-2xl text-center text-muted-foreground bg-muted/5">
+                  <p className="text-lg font-medium">Email content synchronization is coming soon.</p>
+                  <p className="text-sm mt-2">We are currently syncing metadata and headers for lightning-fast performance.</p>
+                </div>
+              </div>
+            </ScrollArea>
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+            <div className="text-center">
+              <Mail className="w-16 h-16 mx-auto mb-4 opacity-10" />
+              <p>Select an email to read</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
-
-export default App;
