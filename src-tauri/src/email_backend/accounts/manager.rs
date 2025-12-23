@@ -3,7 +3,12 @@ use tauri::{AppHandle, Manager};
 use crate::email_backend::accounts::google::GoogleAccount;
 use crate::utils::security::EncryptedStore;
 use std::path::PathBuf;
+use std::sync::Arc;
 use sqlx::sqlite::SqlitePool;
+use email::account::config::AccountConfig;
+use email::account::config::oauth2::OAuth2Config;
+use email::imap::config::{ImapConfig, ImapAuthConfig};
+use secret::Secret;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "data")]
@@ -41,6 +46,43 @@ impl Account {
             Account::Google(a) => {
                 a.access_token = None;
                 a.refresh_token = None;
+            }
+        }
+    }
+
+    pub fn get_configs(&self) -> Result<(Arc<AccountConfig>, Arc<ImapConfig>), String> {
+        match self {
+            Account::Google(google) => {
+                let client_id = std::env::var("GOOGLE_CLIENT_ID")
+                    .map_err(|_| "GOOGLE_CLIENT_ID not found in environment".to_string())?;
+                let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
+                    .map_err(|_| "GOOGLE_CLIENT_SECRET not found in environment".to_string())?;
+
+                let oauth2_config = OAuth2Config {
+                    client_id,
+                    client_secret: Some(Secret::new_raw(client_secret)),
+                    auth_url: "https://accounts.google.com/o/oauth2/auth".into(),
+                    token_url: "https://www.googleapis.com/oauth2/v3/token".into(),
+                    access_token: google.access_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),
+                    refresh_token: google.refresh_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),
+                    ..Default::default()
+                };
+
+                let account_config = Arc::new(AccountConfig {
+                    name: google.email.clone(),
+                    email: google.email.clone(),
+                    ..Default::default()
+                });
+
+                let imap_config = Arc::new(ImapConfig {
+                    host: "imap.gmail.com".into(),
+                    port: 993,
+                    login: google.email.clone(),
+                    auth: ImapAuthConfig::OAuth2(oauth2_config),
+                    ..Default::default()
+                });
+
+                Ok((account_config, imap_config))
             }
         }
     }
@@ -103,6 +145,13 @@ impl AccountManager {
         }
 
         Ok(registry)
+    }
+
+    pub async fn get_account_by_id(&self, id: i64) -> Result<Account, String> {
+        let registry = self.load().await?;
+        registry.accounts.into_iter()
+            .find(|a| a.id() == Some(id))
+            .ok_or_else(|| format!("Account with ID {} not found", id))
     }
 
     pub async fn save(&self, registry: &AccountRegistry) -> Result<(), String> {

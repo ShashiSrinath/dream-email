@@ -29,14 +29,14 @@ Act as a desktop email client with **multiple inboxes in the same view** (Unifie
 - [x] **Sidebar Navigation**:
   - [x] "Unified Inbox" (All accounts).
   - [x] Individual account folders (fetched dynamically).
-  - [ ] Smart Folders (Unread, Flagged, etc.).
+  - [x] Smart Folders (Unread, Flagged, etc.).
 - [x] **Message List View**:
-  - [ ] Virtual scrolling for high performance.
-  - [ ] Multi-select actions.
+  - [x] Virtual scrolling for high performance.
+  - [x] Multi-select actions.
   - [x] Account indicators (visual cues for which inbox an email belongs to).
 - [x] **Email Detail View**:
-  - [ ] Sanitized HTML rendering.
-  - [ ] Attachment handling.
+  - [x] Sanitized HTML rendering.
+  - [x] Attachment handling.
 
 ## Phase 4: Sending & Composition
 

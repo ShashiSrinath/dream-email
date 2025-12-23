@@ -13,7 +13,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
-import { Inbox, Mail, Plus, Settings } from "lucide-react"
+import { Inbox, Mail, Plus, Settings, CircleAlert, Star } from "lucide-react"
 import { useEffect, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Link, useSearch } from "@tanstack/react-router"
@@ -79,11 +79,35 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={!search.accountId && !search.folderId}>
-                   <Link to="/" search={{ accountId: undefined, folderId: undefined }}>
+                <SidebarMenuButton asChild isActive={!search.accountId && !search.folderId && !search.filter}>
+                   <Link to="/" search={{ accountId: undefined, folderId: undefined, filter: undefined }}>
                     <Inbox className="w-4 h-4" />
                     <span>Unified Inbox</span>
                    </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Smart Folders</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={search.filter === "unread"}>
+                  <Link to="/" search={{ accountId: undefined, folderId: undefined, filter: "unread" }}>
+                    <CircleAlert className="w-4 h-4" />
+                    <span>Unread</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={search.filter === "flagged"}>
+                  <Link to="/" search={{ accountId: undefined, folderId: undefined, filter: "flagged" }}>
+                    <Star className="w-4 h-4" />
+                    <span>Flagged</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -99,9 +123,9 @@ export function AppSidebar() {
                   <SidebarMenuButton 
                     asChild 
                     tooltip={account.data.email}
-                    isActive={search.accountId === account.id && !search.folderId}
+                    isActive={search.accountId === account.id && !search.folderId && !search.filter}
                   >
-                    <Link to="/" search={{ accountId: account.id, folderId: undefined }}>
+                    <Link to="/" search={{ accountId: account.id, folderId: undefined, filter: undefined }}>
                         {account.type === 'google' ? <Gmail className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
                         <span>{account.data.name || account.data.email}</span>
                     </Link>
@@ -110,7 +134,7 @@ export function AppSidebar() {
                     {account.id && accountFolders[account.id]?.map((folder) => (
                         <SidebarMenuSubItem key={folder.id}>
                             <SidebarMenuSubButton asChild isActive={search.folderId === folder.id}>
-                                <Link to="/" search={{ accountId: account.id, folderId: folder.id }}>
+                                <Link to="/" search={{ accountId: account.id, folderId: folder.id, filter: undefined }}>
                                     <span className="truncate">{folder.name}</span>
                                     {folder.unread_count > 0 && (
                                         <span className="ml-auto text-[10px] bg-primary text-primary-foreground px-1.5 rounded-full">
