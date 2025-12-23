@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Separator } from "@/components/ui/separator";
 import { Gmail } from "@/components/ui/svgs/gmail.tsx";
 import { AccountTypeCard } from "@/routes/accounts/-components/account-type-card.tsx";
@@ -11,10 +11,12 @@ export const Route = createFileRoute("/accounts/new-account")({
 });
 
 function RouteComponent() {
+  const navigate = useNavigate();
+
   useEffect(() => {
     const unlistenAdded = listen("google-account-added", (event) => {
       console.log("Google account added:", event.payload);
-      // TODO: Save to local state/database and redirect
+      navigate({ to: "/" });
     });
 
     const unlistenError = listen("google-account-error", (event) => {
@@ -25,7 +27,7 @@ function RouteComponent() {
       unlistenAdded.then((f) => f());
       unlistenError.then((f) => f());
     };
-  }, []);
+  }, [navigate]);
 
   const handleGoogleLogin = async () => {
     try {

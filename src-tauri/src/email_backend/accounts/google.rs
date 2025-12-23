@@ -116,6 +116,8 @@ impl GoogleOAuth2Config {
     }
 }
 
+use crate::email_backend::accounts::manager::{Account, AccountManager};
+
 pub async fn get_auth_url(app_handle: &AppHandle) {
     let account_config = match GoogleOAuth2Config::new() {
         Ok(config) => config,
@@ -128,7 +130,12 @@ pub async fn get_auth_url(app_handle: &AppHandle) {
 
     match res {
         Ok(account) => {
-            let _ = app_handle.emit("google-account-added", account);
+            let manager = AccountManager::new(app_handle);
+            if let Err(e) = manager.add_account(Account::Google(account.clone())) {
+                let _ = app_handle.emit("google-account-error", e);
+            } else {
+                let _ = app_handle.emit("google-account-added", account);
+            }
         }
         Err(e) => {
             let _ = app_handle.emit("google-account-error", e.to_string());
