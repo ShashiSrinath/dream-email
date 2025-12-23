@@ -18,6 +18,7 @@ import * as matchers from "@testing-library/jest-dom/matchers";
 import { mock, afterEach, expect } from "bun:test";
 import { cleanup } from "@testing-library/react";
 import React from "react";
+import { useEmailStore } from "@/lib/store";
 
 // Extend expect with jest-dom matchers
 expect.extend(matchers as any);
@@ -63,4 +64,5 @@ mock.module("@tanstack/react-router", () => ({
 
 afterEach(() => {
   cleanup();
+  useEmailStore.getState().reset();
 });

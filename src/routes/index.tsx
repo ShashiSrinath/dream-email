@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { format } from "date-fns";
 import { Mail, User, Clock, Paperclip, Trash2, Archive, MailOpen, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { z } from "zod";
 import DOMPurify from "dompurify";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEmailStore, Attachment } from "@/lib/store";
 
 const inboxSearchSchema = z.object({
   accountId: z.number().optional(),
@@ -25,43 +25,20 @@ export const Route = createFileRoute("/")({
   component: InboxView,
 });
 
-type Email = {
-  id: number;
-  account_id: number;
-  folder_id: number;
-  remote_id: string;
-  message_id: string | null;
-  subject: string | null;
-  sender_name: string | null;
-  sender_address: string;
-  date: string;
-  flags: string;
-  snippet: string | null;
-  has_attachments: boolean;
-};
-
-type EmailContent = {
-  body_text: string | null;
-  body_html: string | null;
-};
-
-type Attachment = {
-  id: number;
-  email_id: number;
-  filename: string | null;
-  mime_type: string | null;
-  size: number;
-};
-
 export function InboxView() {
   const { accountId, folderId, filter } = Route.useSearch();
-  const [emails, setEmails] = useState<Email[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
-  const [emailContent, setEmailContent] = useState<EmailContent | null>(null);
-  const [loadingContent, setLoadingContent] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const emails = useEmailStore(state => state.emails);
+  const loadingEmails = useEmailStore(state => state.loadingEmails);
+  const selectedEmailId = useEmailStore(state => state.selectedEmailId);
+  const emailContent = useEmailStore(state => state.emailContent);
+  const loadingContent = useEmailStore(state => state.loadingContent);
+  const selectedIds = useEmailStore(state => state.selectedIds);
+  const attachments = useEmailStore(state => state.attachments);
+  const fetchEmails = useEmailStore(state => state.fetchEmails);
+  const setSelectedEmailId = useEmailStore(state => state.setSelectedEmailId);
+  const toggleSelect = useEmailStore(state => state.toggleSelect);
+  const toggleSelectAll = useEmailStore(state => state.toggleSelectAll);
+  const markAsRead = useEmailStore(state => state.markAsRead);
 
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -72,71 +49,8 @@ export function InboxView() {
     overscan: 5,
   });
 
-  const toggleSelect = (id: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
   const isAllSelected = emails.length > 0 && selectedIds.size === emails.length;
   const isSomeSelected = selectedIds.size > 0 && selectedIds.size < emails.length;
-
-  const toggleSelectAll = () => {
-    if (isAllSelected) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(emails.map((e) => e.id)));
-    }
-  };
-
-  const fetchEmails = async () => {
-    try {
-      setLoading(true);
-      const data = await invoke<Email[]>("get_emails", { 
-        accountId: accountId || null, 
-        folderId: folderId || null,
-        filter: filter || null
-      });
-      setEmails(data);
-      setSelectedIds(new Set());
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const markAsRead = async (ids: number[]) => {
-    try {
-      await invoke("mark_as_read", { emailIds: ids });
-      // The backend emits "emails-updated", which triggers fetchEmails via the listener
-    } catch (error) {
-      console.error("Failed to mark as read:", error);
-    }
-  };
-
-  const fetchEmailContent = async (id: number) => {
-    try {
-      setLoadingContent(true);
-      const [content, atts] = await Promise.all([
-        invoke<EmailContent>("get_email_content", { emailId: id }),
-        invoke<Attachment[]>("get_attachments", { emailId: id })
-      ]);
-      setEmailContent(content);
-      setAttachments(atts);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingContent(false);
-    }
-  };
 
   const downloadAttachment = async (att: Attachment) => {
     try {
@@ -164,32 +78,10 @@ export function InboxView() {
   };
 
   useEffect(() => {
-    fetchEmails();
+    fetchEmails({ accountId, folderId, filter });
+  }, [accountId, folderId, filter, fetchEmails]);
 
-    const unlisten = listen("emails-updated", () => {
-      fetchEmails();
-    });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [accountId, folderId, filter]);
-
-  useEffect(() => {
-    if (selectedEmailId) {
-      fetchEmailContent(selectedEmailId);
-      
-      const email = emails.find(e => e.id === selectedEmailId);
-      if (email && !email.flags.includes("seen")) {
-        markAsRead([selectedEmailId]);
-      }
-    } else {
-      setEmailContent(null);
-      setAttachments([]);
-    }
-  }, [selectedEmailId]);
-
-  const selectedEmail = emails.find((e) => e.id === selectedEmailId);
+  const selectedEmail = useMemo(() => emails.find((e) => e.id === selectedEmailId), [emails, selectedEmailId]);
 
   const sanitizedHtml = useMemo(() => {
     if (!emailContent?.body_html) return null;
@@ -270,12 +162,12 @@ export function InboxView() {
         )}
         
         <div ref={parentRef} className="flex-1 overflow-auto">
-          {loading && emails.length === 0 && (
+          {loadingEmails && emails.length === 0 && (
               <div className="p-8 text-center text-muted-foreground animate-pulse">
                 Loading emails...
               </div>
           )}
-          {!loading && emails.length === 0 && (
+          {!loadingEmails && emails.length === 0 && (
             <div className="p-8 text-center text-muted-foreground">
               <Mail className="w-12 h-12 mx-auto mb-4 opacity-20" />
               <p>No emails found</p>
@@ -318,7 +210,7 @@ export function InboxView() {
                         type="checkbox" 
                         checked={isSelected}
                         onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => toggleSelect(email.id, e as any)}
+                        onChange={() => toggleSelect(email.id)}
                         className={cn(
                           "w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary transition-opacity",
                           !isSelected && "opacity-0 group-hover:opacity-100"

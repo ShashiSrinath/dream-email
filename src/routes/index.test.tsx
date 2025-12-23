@@ -3,6 +3,7 @@ import { render, within, fireEvent, waitFor, act } from "@testing-library/react"
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { InboxView } from "./index";
 import { mockInvoke, mockListen } from "../test/setup";
+import { useEmailStore } from "@/lib/store";
 
 // Mock TanStack Virtual
 mock.module("@tanstack/react-virtual", () => ({
@@ -109,6 +110,7 @@ describe("InboxView", () => {
   });
 
   it("refreshes email list on emails-updated event", async () => {
+    useEmailStore.getState().init();
     render(<InboxView />);
     const screen = within(document.body);
 
@@ -126,8 +128,10 @@ describe("InboxView", () => {
     });
 
     await waitFor(() => {
-      // It should have called get_emails again
-      expect(mockInvoke).toHaveBeenCalledTimes(2); // Initial + refresh
+      // Check that get_emails was called at least twice (initial + refresh)
+      const getEmailCalls = mockInvoke.mock.calls.filter(call => call[0] === "get_emails");
+      expect(getEmailCalls.length).toBe(2);
+      expect(screen.getAllByText("Test Email 1").length).toBeGreaterThan(0);
     });
   });
 });

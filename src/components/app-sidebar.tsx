@@ -11,67 +11,23 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  SidebarMenuSubItem,
-} from "@/components/ui/sidebar"
-import { Inbox, Mail, Plus, Settings, CircleAlert, Star } from "lucide-react"
-import { useEffect, useState, useMemo } from "react"
-import { invoke } from "@tauri-apps/api/core"
-import { listen } from "@tauri-apps/api/event"
-import { Link, useSearch } from "@tanstack/react-router"
-import { Gmail } from "@/components/ui/svgs/gmail"
-
-type Account = {
-  id?: number;
-  type: "google";
-  data: {
-    email: string;
-    name?: string;
-    picture?: string;
-  };
-};
-
-type Folder = {
-  id: number;
-  account_id: number;
-  name: string;
-  path: string;
-  role?: string;
-  unread_count: number;
-};
+  SidebarMenuSubItem
+} from "@/components/ui/sidebar";
+import { CircleAlert, Inbox, Mail, Plus, Settings, Star } from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { Link, useSearch } from "@tanstack/react-router";
+import { Gmail } from "@/components/ui/svgs/gmail";
+import { useEmailStore } from "@/lib/store";
 
 export function AppSidebar() {
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [accountFolders, setAccountFolders] = useState<Record<number, Folder[]>>({})
+  const accounts = useEmailStore(state => state.accounts)
+  const accountFolders = useEmailStore(state => state.accountFolders)
+  const init = useEmailStore(state => state.init)
   const search = useSearch({ from: '/' })
 
-  const fetchAccountsAndFolders = async () => {
-    try {
-      const data = await invoke<Account[]>("get_accounts")
-      setAccounts(data)
-      
-      // Fetch folders for each account
-      for (const account of data) {
-        if (account.id) {
-          const folders = await invoke<Folder[]>("get_folders", { accountId: account.id })
-          setAccountFolders(prev => ({ ...prev, [account.id!]: folders }))
-        }
-      }
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
   useEffect(() => {
-    fetchAccountsAndFolders()
-
-    const unlisten = listen("emails-updated", () => {
-      fetchAccountsAndFolders()
-    })
-
-    return () => {
-      unlisten.then(fn => fn())
-    }
-  }, [])
+    return init();
+  }, [init])
 
   const totalUnread = useMemo(() => {
     return Object.values(accountFolders).flat().reduce((acc, folder) => acc + folder.unread_count, 0)
@@ -144,8 +100,8 @@ export function AppSidebar() {
             <SidebarMenu>
               {accounts.map((account) => (
                 <SidebarMenuItem key={account.data.email}>
-                  <SidebarMenuButton 
-                    asChild 
+                  <SidebarMenuButton
+                    asChild
                     tooltip={account.data.email}
                     isActive={search.accountId === account.id && !search.folderId && !search.filter}
                   >

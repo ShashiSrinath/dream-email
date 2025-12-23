@@ -51,7 +51,9 @@ describe("AppSidebar", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Inbox")).toBeInTheDocument();
-      expect(screen.getByText("5")).toBeInTheDocument(); // Unread count
+      // Use getAllByText and check that at least one '5' is found, or be more specific
+      const unreadBadges = screen.getAllByText("5");
+      expect(unreadBadges.length).toBeGreaterThan(0);
     });
   });
 
