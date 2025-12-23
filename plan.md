@@ -11,7 +11,7 @@ Act as a desktop email client with **multiple inboxes in the same view** (Unifie
 ## Phase 1: Authentication & Account Foundation (Current)
 
 - [x] **Complete Google OAuth Flow**: Finalize the Rust-side OAuth2 handshake and token exchange.
-- [x] **Secure Storage**: Implement secure storage for Refresh Tokens (using `keyring` or Tauri's encrypted store).
+- [x] **Secure Storage**: Implement secure storage for Refresh Tokens (using `keyring` and Tauri's Stronghold).
 - [x] **Multi-Account Manager**: Create a backend registry to manage multiple configured accounts (IMAP/SMTP/OAuth).
 - [x] **Account Management UI**: Allow users to add, edit, and remove multiple Google/IMAP accounts.
 

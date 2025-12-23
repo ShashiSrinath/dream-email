@@ -1,14 +1,13 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_stronghold::stronghold::Stronghold;
+use crate::utils::security::get_or_create_stronghold_password;
 use crate::email_backend::accounts::google::GoogleAccount;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", content = "data")]
 pub enum Account {
     Google(GoogleAccount),
-    // Future: Imap(ImapAccount),
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -17,35 +16,67 @@ pub struct AccountRegistry {
 }
 
 pub struct AccountManager {
-    storage_path: PathBuf,
+    app_handle: AppHandle,
 }
 
 impl AccountManager {
     pub fn new(app_handle: &AppHandle) -> Self {
-        let mut storage_path = app_handle.path().app_data_dir().expect("failed to get app data dir");
-        if !storage_path.exists() {
-            fs::create_dir_all(&storage_path).expect("failed to create app data dir");
+        Self {
+            app_handle: app_handle.clone(),
         }
-        storage_path.push("accounts.json");
-        AccountManager { storage_path }
     }
 
-    pub fn load(&self) -> Result<AccountRegistry, String> {
-        if !self.storage_path.exists() {
-            return Ok(AccountRegistry::default());
+    async fn get_stronghold(&self) -> Result<Stronghold, String> {
+        let password = get_or_create_stronghold_password(&self.app_handle).await?;
+        let stronghold_path = self.app_handle.path().app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("stronghold.bin");
+        
+        // Ensure parent directory exists
+        if let Some(parent) = stronghold_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let content = fs::read_to_string(&self.storage_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).map_err(|e| e.to_string())
+
+        Stronghold::new(stronghold_path, password.into_bytes()).map_err(|e| e.to_string())
     }
 
-    pub fn save(&self, registry: &AccountRegistry) -> Result<(), String> {
-        let content = serde_json::to_string_pretty(registry).map_err(|e| e.to_string())?;
-        fs::write(&self.storage_path, content).map_err(|e| e.to_string())
+    pub async fn load(&self) -> Result<AccountRegistry, String> {
+        let stronghold = self.get_stronghold().await?;
+        let client = stronghold.load_client("accounts").map_err(|e| e.to_string())?;
+        let store = client.store();
+
+        match store.get(b"registry").map_err(|e| e.to_string())? {
+            Some(data) => {
+                serde_json::from_slice(&data).map_err(|e| e.to_string())
+            }
+            None => Ok(AccountRegistry::default()),
+        }
     }
 
-    pub fn add_account(&self, account: Account) -> Result<(), String> {
-        let mut registry = self.load()?;
+    pub async fn save(&self, registry: &AccountRegistry) -> Result<(), String> {
+        let stronghold = self.get_stronghold().await?;
+        let client = stronghold.load_client("accounts").map_err(|e| e.to_string())?;
+        let store = client.store();
+
+        let data = serde_json::to_vec(registry).map_err(|e| e.to_string())?;
+        store.insert(b"registry".to_vec(), data, None).map_err(|e| e.to_string())?;
+        
+        stronghold.save().map_err(|e| e.to_string())
+    }
+
+    pub async fn add_account(&self, account: Account) -> Result<(), String> {
+        let mut registry = self.load().await?;
         registry.accounts.push(account);
-        self.save(&registry)
+        self.save(&registry).await
+    }
+
+    pub async fn remove_account(&self, index: usize) -> Result<(), String> {
+        let mut registry = self.load().await?;
+        if index < registry.accounts.len() {
+            registry.accounts.remove(index);
+            self.save(&registry).await
+        } else {
+            Err("Account index out of bounds".to_string())
+        }
     }
 }

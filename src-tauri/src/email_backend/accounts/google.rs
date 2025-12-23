@@ -8,8 +8,9 @@ use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GoogleAccount {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
+    pub email: String,
+    pub name: Option<String>,
+    pub picture: Option<String>,
 }
 
 pub struct GoogleOAuth2Config {
@@ -32,6 +33,8 @@ impl GoogleOAuth2Config {
         config.token_url = "https://www.googleapis.com/oauth2/v3/token".into();
         config.scopes = Scopes(vec![
             "https://mail.google.com/".into(),
+            "https://www.googleapis.com/auth/userinfo.email".into(),
+            "https://www.googleapis.com/auth/userinfo.profile".into(),
         ]);
 
         Ok(GoogleOAuth2Config {
@@ -42,14 +45,6 @@ impl GoogleOAuth2Config {
     }
 
     pub async fn get_url(&self, app_handle: &AppHandle) -> Result<GoogleAccount, Error> {
-        if let Ok(access_token) = self.base.access_token.get().await {
-            let refresh_token = self.base.refresh_token.get().await.ok();
-            return Ok(GoogleAccount {
-                access_token,
-                refresh_token,
-            });
-        }
-
         let redirect_scheme = match self.base.redirect_scheme.as_ref() {
             Some(scheme) => scheme.clone(),
             None => "http".into(),
@@ -97,21 +92,39 @@ impl GoogleOAuth2Config {
             .await
             .map_err(Error::WaitForOauthRedirectionError)?;
 
+        // Fetch user info from Google API
+        let user_info_client = reqwest::Client::new();
+        let user_info: serde_json::Value = user_info_client
+            .get("https://www.googleapis.com/oauth2/v3/userinfo")
+            .bearer_auth(&access_token)
+            .send()
+            .await
+            .map_err(|e| Error::GetAccountConfigNotFoundError(e.to_string()))?
+            .json()
+            .await
+            .map_err(|e| Error::GetAccountConfigNotFoundError(e.to_string()))?;
+
+        let email = user_info["email"].as_str().ok_or_else(|| Error::GetAccountConfigNotFoundError("Email not found in userinfo".into()))?.to_string();
+        let name = user_info["name"].as_str().map(|s| s.to_string());
+        let picture = user_info["picture"].as_str().map(|s| s.to_string());
+
+        // Use email as key for keyring
         self.base.access_token
-            .set_if_keyring(access_token.clone())
+            .set_if_keyring(access_token)
             .await
             .map_err(Error::SetAccessTokenOauthError)?;
 
         if let Some(refresh_token) = &refresh_token {
             self.base.refresh_token
-                .set_if_keyring(refresh_token.clone())
+                .set_if_keyring(refresh_token)
                 .await
                 .map_err(Error::SetRefreshTokenOauthError)?;
         }
 
         Ok(GoogleAccount {
-            access_token,
-            refresh_token,
+            email,
+            name,
+            picture,
         })
     }
 }
@@ -128,17 +141,17 @@ pub async fn get_auth_url(app_handle: &AppHandle) {
     };
     let res = account_config.get_url(app_handle).await;
 
-    match res {
-        Ok(account) => {
-            let manager = AccountManager::new(app_handle);
-            if let Err(e) = manager.add_account(Account::Google(account.clone())) {
-                let _ = app_handle.emit("google-account-error", e);
-            } else {
-                let _ = app_handle.emit("google-account-added", account);
+        match res {
+            Ok(account) => {
+                let manager = AccountManager::new(app_handle);
+                if let Err(e) = manager.add_account(Account::Google(account.clone())).await {
+                    let _ = app_handle.emit("google-account-error", e);
+                } else {
+                    let _ = app_handle.emit("google-account-added", account);
+                }
+            }
+            Err(e) => {
+                let _ = app_handle.emit("google-account-error", e.to_string());
             }
         }
-        Err(e) => {
-            let _ = app_handle.emit("google-account-error", e.to_string());
-        }
-    }
 }
