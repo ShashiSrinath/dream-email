@@ -93,21 +93,30 @@ pub struct AccountRegistry {
     pub accounts: Vec<Account>,
 }
 
-pub struct AccountManager {
-    app_handle: AppHandle,
+pub struct AccountManager<R: tauri::Runtime = tauri::Wry> {
+    app_handle: tauri::AppHandle<R>,
     store: EncryptedStore,
+    #[cfg(test)]
+    storage_path_override: Option<PathBuf>,
 }
 
-impl AccountManager {
-    pub async fn new(app_handle: &AppHandle) -> Result<Self, String> {
+impl<R: tauri::Runtime> AccountManager<R> {
+    pub async fn new(app_handle: &tauri::AppHandle<R>) -> Result<Self, String> {
         let store = EncryptedStore::new().await?;
         Ok(Self {
             app_handle: app_handle.clone(),
             store,
+            #[cfg(test)]
+            storage_path_override: None,
         })
     }
 
     fn get_storage_path(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(path) = &self.storage_path_override {
+            return path.clone();
+        }
+
         self.app_handle.path().app_data_dir()
             .expect("Failed to get app data dir")
             .join("accounts.json.enc")
@@ -206,5 +215,80 @@ impl AccountManager {
         } else {
             Err("Account index out of bounds".to_string())
         }
+    }
+
+    #[cfg(test)]
+    pub fn new_test(app_handle: tauri::AppHandle<R>, store: EncryptedStore, storage_path: Option<PathBuf>) -> Self {
+        Self { app_handle, store, storage_path_override: storage_path }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::email_backend::accounts::google::GoogleAccount;
+    use crate::utils::security::EncryptedStore;
+    use crate::utils::test_utils::setup_test_db;
+    use tauri::test::mock_builder;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_strip_secrets() {
+        let mut account = Account::Google(GoogleAccount {
+            id: Some(1),
+            email: "test@gmail.com".to_string(),
+            name: Some("Test User".to_string()),
+            picture: None,
+            access_token: Some("secret_access".to_string()),
+            refresh_token: Some("secret_refresh".to_string()),
+        });
+
+        account.strip_secrets();
+
+        match account {
+            Account::Google(a) => {
+                assert!(a.access_token.is_none());
+                assert!(a.refresh_token.is_none());
+                assert_eq!(a.email, "test@gmail.com");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_account_integration() {
+        let pool = setup_test_db().await;
+        let app = mock_builder().build(tauri::generate_context!()).unwrap();
+        app.manage(pool);
+
+        let dir = tempdir().unwrap();
+        let storage_path = dir.path().join("accounts.json.enc");
+
+        let key = [0u8; 32];
+        let store = EncryptedStore::new_test(key);
+        let manager = AccountManager::new_test(app.handle().clone(), store, Some(storage_path));
+
+        let account = Account::Google(GoogleAccount {
+            id: None,
+            email: "test@gmail.com".to_string(),
+            name: Some("Test User".to_string()),
+            picture: None,
+            access_token: Some("access".to_string()),
+            refresh_token: Some("refresh".to_string()),
+        });
+
+        manager.add_account(account).await.expect("Failed to add account");
+
+        let registry = manager.load().await.expect("Failed to load accounts");
+        assert_eq!(registry.accounts.len(), 1);
+        assert_eq!(registry.accounts[0].email(), "test@gmail.com");
+        assert!(registry.accounts[0].id().is_some());
+
+        // Verify it was saved to the database too
+        let db_pool = app.state::<SqlitePool>();
+        let count: (i64,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&*db_pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1);
     }
 }

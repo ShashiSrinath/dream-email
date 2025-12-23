@@ -70,4 +70,70 @@ impl EncryptedStore {
 
         cipher.decrypt(nonce, ciphertext).map_err(|e| e.to_string())
     }
+
+    #[cfg(test)]
+    pub fn new_test(key: [u8; 32]) -> Self {
+        Self { key }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_encryption_decryption_cycle() {
+        let key = [1u8; 32];
+        let store = EncryptedStore::new_test(key);
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.enc");
+        let original_data = b"hello world secret data";
+
+        store.save(file_path.clone(), original_data).expect("Save failed");
+        let decrypted_data = store.load(file_path).expect("Load failed");
+
+        assert_eq!(original_data, decrypted_data.as_slice());
+    }
+
+    #[test]
+    fn test_load_non_existent_file() {
+        let key = [1u8; 32];
+        let store = EncryptedStore::new_test(key);
+        let file_path = PathBuf::from("non_existent_file.enc");
+
+        let result = store.load(file_path);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "File not found");
+    }
+
+    #[test]
+    fn test_load_invalid_data_format() {
+        let key = [1u8; 32];
+        let store = EncryptedStore::new_test(key);
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("invalid.enc");
+
+        fs::write(&file_path, b"short").unwrap();
+
+        let result = store.load(file_path);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Invalid data format");
+    }
+
+    #[test]
+    fn test_decryption_with_wrong_key() {
+        let key1 = [1u8; 32];
+        let key2 = [2u8; 32];
+        let store1 = EncryptedStore::new_test(key1);
+        let store2 = EncryptedStore::new_test(key2);
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.enc");
+        let original_data = b"secret data";
+
+        store1.save(file_path.clone(), original_data).expect("Save failed");
+        let result = store2.load(file_path);
+
+        assert!(result.is_err());
+    }
 }

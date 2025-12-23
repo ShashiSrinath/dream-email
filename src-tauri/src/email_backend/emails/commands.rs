@@ -41,8 +41,8 @@ pub struct Folder {
 }
 
 #[tauri::command]
-pub async fn get_emails(
-    app_handle: AppHandle, 
+pub async fn get_emails<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>, 
     account_id: Option<i64>, 
     folder_id: Option<i64>,
     filter: Option<String>
@@ -99,7 +99,7 @@ pub struct Attachment {
 }
 
 #[tauri::command]
-pub async fn get_email_content(app_handle: AppHandle, email_id: i64) -> Result<EmailContent, String> {
+pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<EmailContent, String> {
     let pool = app_handle.state::<SqlitePool>();
     
     // 1. Check if we already have the content
@@ -182,7 +182,7 @@ pub async fn get_email_content(app_handle: AppHandle, email_id: i64) -> Result<E
 }
 
 #[tauri::command]
-pub async fn get_attachments(app_handle: AppHandle, email_id: i64) -> Result<Vec<Attachment>, String> {
+pub async fn get_attachments<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<Vec<Attachment>, String> {
     let pool = app_handle.state::<SqlitePool>();
     let attachments = sqlx::query_as::<_, Attachment>("SELECT id, email_id, filename, mime_type, size FROM attachments WHERE email_id = ?")
         .bind(email_id)
@@ -193,7 +193,7 @@ pub async fn get_attachments(app_handle: AppHandle, email_id: i64) -> Result<Vec
 }
 
 #[tauri::command]
-pub async fn get_attachment_data(app_handle: AppHandle, attachment_id: i64) -> Result<Vec<u8>, String> {
+pub async fn get_attachment_data<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, attachment_id: i64) -> Result<Vec<u8>, String> {
     let pool = app_handle.state::<SqlitePool>();
     let row: (Vec<u8>,) = sqlx::query_as("SELECT data FROM attachments WHERE id = ?")
         .bind(attachment_id)
@@ -204,7 +204,7 @@ pub async fn get_attachment_data(app_handle: AppHandle, attachment_id: i64) -> R
 }
 
 #[tauri::command]
-pub async fn get_folders(app_handle: AppHandle, account_id: i64) -> Result<Vec<Folder>, String> {
+pub async fn get_folders<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, account_id: i64) -> Result<Vec<Folder>, String> {
     let pool = app_handle.state::<SqlitePool>();
     let folders = sqlx::query_as::<_, Folder>("SELECT * FROM folders WHERE account_id = ?")
         .bind(account_id)
@@ -212,4 +212,87 @@ pub async fn get_folders(app_handle: AppHandle, account_id: i64) -> Result<Vec<F
         .await
         .map_err(|e| e.to_string())?;
     Ok(folders)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::test_utils::setup_test_db;
+    use tauri::test::mock_builder;
+    use chrono::Utc;
+    use sqlx::Row;
+
+    async fn seed_test_data(pool: &SqlitePool) -> (i64, i64, i64) {
+        // Create account
+        let row: (i64,) = sqlx::query_as("INSERT INTO accounts (email, account_type) VALUES (?, ?) RETURNING id")
+            .bind("test@example.com")
+            .bind("google")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let account_id = row.0;
+
+        // Create folder
+        let row: (i64,) = sqlx::query_as("INSERT INTO folders (account_id, name, path) VALUES (?, ?, ?) RETURNING id")
+            .bind(account_id)
+            .bind("Inbox")
+            .bind("INBOX")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let folder_id = row.0;
+
+        // Create email
+        let row: (i64,) = sqlx::query_as(
+            "INSERT INTO emails (account_id, folder_id, remote_id, subject, sender_address, date, flags, body_text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
+        )
+        .bind(account_id)
+        .bind(folder_id)
+        .bind("remote-1")
+        .bind("Test Subject")
+        .bind("sender@example.com")
+        .bind(Utc::now().to_rfc3339())
+        .bind("[]")
+        .bind("Hello content")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let email_id = row.0;
+
+        (account_id, folder_id, email_id)
+    }
+
+    #[tokio::test]
+    async fn test_get_emails_integration() {
+        use tauri::Manager;
+        let pool = setup_test_db().await;
+        let (account_id, folder_id, _) = seed_test_data(&pool).await;
+        
+        let app = mock_builder().build(tauri::generate_context!()).unwrap();
+        app.manage(pool);
+
+        let emails = get_emails(app.handle().clone(), Some(account_id), Some(folder_id), None)
+            .await
+            .expect("Failed to get emails");
+
+        assert_eq!(emails.len(), 1);
+        assert_eq!(emails[0].subject, Some("Test Subject".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_email_content_cached() {
+        use tauri::Manager;
+        let pool = setup_test_db().await;
+        let (_, _, email_id) = seed_test_data(&pool).await;
+        
+        let app = mock_builder().build(tauri::generate_context!()).unwrap();
+        app.manage(pool);
+
+        let content = get_email_content(app.handle().clone(), email_id)
+            .await
+            .expect("Failed to get email content");
+
+        assert_eq!(content.body_text, Some("Hello content".to_string()));
+    }
 }

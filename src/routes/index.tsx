@@ -53,7 +53,7 @@ type Attachment = {
   size: number;
 };
 
-function InboxView() {
+export function InboxView() {
   const { accountId, folderId, filter } = Route.useSearch();
   const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);

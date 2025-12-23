@@ -1,0 +1,70 @@
+import "../test/setup";
+import { describe, it, expect, beforeEach } from "bun:test";
+import { render, within, waitFor } from "@testing-library/react";
+import { AppSidebar } from "./app-sidebar";
+import { mockInvoke } from "../test/setup";
+import { SidebarProvider } from "@/components/ui/sidebar";
+
+const mockAccounts = [
+  {
+    id: 1,
+    type: "google",
+    data: {
+      email: "test@gmail.com",
+      name: "Test User",
+    },
+  },
+];
+
+const mockFolders = [
+  {
+    id: 1,
+    account_id: 1,
+    name: "Inbox",
+    path: "INBOX",
+    unread_count: 5,
+  },
+];
+
+describe("AppSidebar", () => {
+  beforeEach(() => {
+    mockInvoke.mockClear();
+    mockInvoke.mockImplementation((command, _args) => {
+      if (command === "get_accounts") return Promise.resolve(mockAccounts);
+      if (command === "get_folders") return Promise.resolve(mockFolders);
+      return Promise.resolve();
+    });
+  });
+
+  it("renders accounts and folders", async () => {
+    render(
+      <SidebarProvider>
+        <AppSidebar />
+      </SidebarProvider>
+    );
+
+    const screen = within(document.body);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test User")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Inbox")).toBeInTheDocument();
+      expect(screen.getByText("5")).toBeInTheDocument(); // Unread count
+    });
+  });
+
+  it("renders main and smart folders", () => {
+    render(
+      <SidebarProvider>
+        <AppSidebar />
+      </SidebarProvider>
+    );
+
+    const screen = within(document.body);
+    expect(screen.getByText("Unified Inbox")).toBeInTheDocument();
+    expect(screen.getByText("Unread")).toBeInTheDocument();
+    expect(screen.getByText("Flagged")).toBeInTheDocument();
+  });
+});
