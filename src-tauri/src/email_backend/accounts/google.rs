@@ -8,9 +8,12 @@ use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GoogleAccount {
+    pub id: Option<i64>,
     pub email: String,
     pub name: Option<String>,
     pub picture: Option<String>,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
 }
 
 pub struct GoogleOAuth2Config {
@@ -108,23 +111,13 @@ impl GoogleOAuth2Config {
         let name = user_info["name"].as_str().map(|s| s.to_string());
         let picture = user_info["picture"].as_str().map(|s| s.to_string());
 
-        // Use email as key for keyring
-        self.base.access_token
-            .set_if_keyring(access_token)
-            .await
-            .map_err(Error::SetAccessTokenOauthError)?;
-
-        if let Some(refresh_token) = &refresh_token {
-            self.base.refresh_token
-                .set_if_keyring(refresh_token)
-                .await
-                .map_err(Error::SetRefreshTokenOauthError)?;
-        }
-
         Ok(GoogleAccount {
+            id: None,
             email,
             name,
             picture,
+            access_token: Some(access_token),
+            refresh_token,
         })
     }
 }

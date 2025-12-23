@@ -17,12 +17,12 @@ Act as a desktop email client with **multiple inboxes in the same view** (Unifie
 
 ## Phase 2: Data Architecture & Sync
 
-- [ ] **Local Database (SQLite)**: Set up a local cache using SQLite to ensure the UI remains snappy even with thousands of emails.
+- [x] **Local Database (SQLite)**: Set up a local cache using SQLite to ensure the UI remains snappy even with thousands of emails.
 - [ ] **Sync Engine**:
-  - Implement background IMAP fetching using `email-lib`.
-  - IDLE support for real-time push notifications/updates.
-  - Incremental sync to minimize bandwidth.
-- [ ] **Unified Schema**: Design a database schema that indexes emails from different providers into a single searchable table.
+  - [x] Implement background IMAP fetching using `email-lib`.
+  - [ ] IDLE support for real-time push notifications/updates.
+  - [ ] Incremental sync to minimize bandwidth.
+- [x] **Unified Schema**: Design a database schema that indexes emails from different providers into a single searchable table.
 
 ## Phase 3: The Unified Inbox UI
 
