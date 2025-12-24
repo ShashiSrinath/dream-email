@@ -98,6 +98,7 @@ interface EmailState {
   // Multi-selection
   selectedIds: Set<number>;
   toggleSelect: (id: number) => void;
+  selectRange: (id: number) => void;
   toggleSelectAll: () => void;
   clearSelection: () => void;
 
@@ -364,6 +365,62 @@ export const useEmailStore = create<EmailState>((set, get) => ({
         next.delete(id);
       } else {
         next.add(id);
+      }
+      return { selectedIds: next };
+    });
+  },
+
+  selectRange: (id) => {
+    const { emails, selectedIds, selectedEmailId } = get();
+    if (emails.length === 0) return;
+
+    const currentIndex = emails.findIndex((e) => e.id === id);
+    if (currentIndex === -1) return;
+
+    // Use the last selected item or the focused item as the anchor
+    let anchorId = selectedEmailId;
+    if (selectedIds.size > 0 && !selectedIds.has(anchorId || -1)) {
+      // If focused item isn't selected, find the "last" selected item's index
+      // For simplicity, we'll just take the one with the highest/lowest index that is already selected
+      // But a better way is to track the last clicked item.
+      // For now, let's just find any selected item's index.
+      const selectedIndices = emails
+        .map((e, i) => (selectedIds.has(e.id) ? i : -1))
+        .filter((i) => i !== -1);
+      
+      if (selectedIndices.length > 0) {
+        // Find the index closest to currentIndex
+        const closestIndex = selectedIndices.reduce((prev, curr) => 
+          Math.abs(curr - currentIndex) < Math.abs(prev - currentIndex) ? curr : prev
+        );
+        anchorId = emails[closestIndex].id;
+      }
+    }
+
+    if (anchorId === null) {
+      get().toggleSelect(id);
+      return;
+    }
+
+    const anchorIndex = emails.findIndex((e) => e.id === anchorId);
+    if (anchorIndex === -1) {
+      get().toggleSelect(id);
+      return;
+    }
+
+    const start = Math.min(anchorIndex, currentIndex);
+    const end = Math.max(anchorIndex, currentIndex);
+
+    set((state) => {
+      const next = new Set(state.selectedIds);
+      const isSelecting = !next.has(id);
+
+      for (let i = start; i <= end; i++) {
+        if (isSelecting) {
+          next.add(emails[i].id);
+        } else {
+          next.delete(emails[i].id);
+        }
       }
       return { selectedIds: next };
     });

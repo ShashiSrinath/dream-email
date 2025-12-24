@@ -35,6 +35,7 @@ export function InboxLayout() {
   const fetchEmails = useEmailStore((state) => state.fetchEmails);
   const fetchMoreEmails = useEmailStore((state) => state.fetchMoreEmails);
   const toggleSelect = useEmailStore((state) => state.toggleSelect);
+  const selectRange = useEmailStore((state) => state.selectRange);
   const toggleSelectAll = useEmailStore((state) => state.toggleSelectAll);
   const markAsRead = useEmailStore((state) => state.markAsRead);
   const moveToTrash = useEmailStore((state) => state.moveToTrash);
@@ -107,6 +108,7 @@ export function InboxLayout() {
           selectedIds={selectedIds}
           selectedEmailId={selectedEmailId}
           onToggleSelect={toggleSelect}
+          onSelectRange={selectRange}
           fetchNextPage={fetchMoreEmails}
           hasNextPage={hasMore}
         />

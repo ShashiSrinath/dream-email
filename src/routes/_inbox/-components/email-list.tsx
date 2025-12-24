@@ -10,6 +10,7 @@ interface EmailListProps {
   selectedIds: Set<number>;
   selectedEmailId: number | null;
   onToggleSelect: (id: number) => void;
+  onSelectRange: (id: number) => void;
   fetchNextPage?: () => void;
   hasNextPage?: boolean;
 }
@@ -20,6 +21,7 @@ export function EmailList({
   selectedIds,
   selectedEmailId,
   onToggleSelect,
+  onSelectRange,
   fetchNextPage,
   hasNextPage,
 }: EmailListProps) {
@@ -79,6 +81,7 @@ export function EmailList({
               isUnread={isUnread}
               selectedEmailId={selectedEmailId}
               onToggleSelect={onToggleSelect}
+              onSelectRange={onSelectRange}
               virtualItem={virtualItem}
               measureElement={virtualizer.measureElement}
             />
