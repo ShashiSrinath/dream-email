@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use crate::email_backend::accounts::manager::AccountManager;
 use email::backend::BackendBuilder;
 use email::imap::ImapContextBuilder;
+use email::smtp::SmtpContextBuilder;
 use email::message::get::GetMessages;
+use email::message::send::SendMessage;
 use email::envelope::Id;
 use email::flag::add::AddFlags;
 use email::flag::Flag;
@@ -42,6 +44,83 @@ pub struct Folder {
     pub total_count: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Draft {
+    pub id: i64,
+    pub account_id: i64,
+    pub to_address: Option<String>,
+    pub subject: Option<String>,
+    pub body_html: Option<String>,
+    pub updated_at: String,
+}
+
+#[tauri::command]
+pub async fn save_draft<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    id: Option<i64>,
+    account_id: i64,
+    to: Option<String>,
+    subject: Option<String>,
+    body_html: Option<String>,
+) -> Result<i64, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    
+    if let Some(draft_id) = id {
+        sqlx::query("UPDATE drafts SET to_address = ?, subject = ?, body_html = ? WHERE id = ?")
+            .bind(to)
+            .bind(subject)
+            .bind(body_html)
+            .bind(draft_id)
+            .execute(&*pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(draft_id)
+    } else {
+        let row: (i64,) = sqlx::query_as("INSERT INTO drafts (account_id, to_address, subject, body_html) VALUES (?, ?, ?, ?) RETURNING id")
+            .bind(account_id)
+            .bind(to)
+            .bind(subject)
+            .bind(body_html)
+            .fetch_one(&*pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+}
+
+#[tauri::command]
+pub async fn get_drafts<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, account_id: i64) -> Result<Vec<Draft>, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    let drafts = sqlx::query_as::<_, Draft>("SELECT * FROM drafts WHERE account_id = ? ORDER BY updated_at DESC")
+        .bind(account_id)
+        .fetch_all(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(drafts)
+}
+
+#[tauri::command]
+pub async fn get_draft_by_id<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, id: i64) -> Result<Draft, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    let draft = sqlx::query_as::<_, Draft>("SELECT * FROM drafts WHERE id = ?")
+        .bind(id)
+        .fetch_one(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(draft)
+}
+
+#[tauri::command]
+pub async fn delete_draft<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, id: i64) -> Result<(), String> {
+    let pool = app_handle.state::<SqlitePool>();
+    sqlx::query("DELETE FROM drafts WHERE id = ?")
+        .bind(id)
+        .execute(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_ids: Vec<i64>) -> Result<(), String> {
     let pool = app_handle.state::<SqlitePool>();
@@ -69,7 +148,7 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
         // 2. Update server if possible
         let manager = AccountManager::new(&app_handle).await?;
         if let Ok(account) = manager.get_account_by_id(account_id).await {
-            if let Ok((account_config, imap_config)) = account.get_configs() {
+            if let Ok((account_config, imap_config, _)) = account.get_configs() {
                 let backend_builder = BackendBuilder::new(
                     account_config.clone(),
                     ImapContextBuilder::new(account_config, imap_config),
@@ -216,7 +295,7 @@ pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R
     let (account_id, remote_id, folder_path) = email_info;
     let manager = AccountManager::new(&app_handle).await?;
     let account = manager.get_account_by_id(account_id).await?;
-    let (account_config, imap_config) = account.get_configs()?;
+    let (account_config, imap_config, _) = account.get_configs()?;
 
     let backend_builder = BackendBuilder::new(
         account_config.clone(),
@@ -290,6 +369,38 @@ pub async fn get_attachment_data<R: tauri::Runtime>(app_handle: tauri::AppHandle
         .await
         .map_err(|e| e.to_string())?;
     Ok(row.0)
+}
+
+#[tauri::command]
+pub async fn send_email<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    account_id: i64,
+    to: String,
+    subject: String,
+    body: String,
+) -> Result<(), String> {
+    let manager = AccountManager::new(&app_handle).await?;
+    let account = manager.get_account_by_id(account_id).await?;
+    let (account_config, _, smtp_config) = account.get_configs()?;
+
+    // Create a simple email message with HTML support
+    let message = format!(
+        "From: {}\r\nTo: {}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{}",
+        account.email(),
+        to,
+        subject,
+        body
+    );
+
+    let backend_builder = BackendBuilder::new(
+        account_config.clone(),
+        SmtpContextBuilder::new(account_config, smtp_config),
+    );
+
+    let backend = backend_builder.build().await.map_err(|e| e.to_string())?;
+    backend.send_message(message.as_bytes()).await.map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[tauri::command]

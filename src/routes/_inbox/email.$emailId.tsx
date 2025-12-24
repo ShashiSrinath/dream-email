@@ -3,9 +3,10 @@ import { Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { format } from "date-fns";
-import { Mail, User, Clock, Paperclip } from "lucide-react";
+import { Mail, User, Clock, Paperclip, Reply, Forward } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import DOMPurify from "dompurify";
 import { useEmailStore, Attachment, EmailContent, Email } from "@/lib/store";
 
@@ -31,6 +32,27 @@ export const Route = createFileRoute("/_inbox/email/$emailId")({
 
 function EmailDetail() {
   const { email, deferred } = Route.useLoaderData();
+  const setComposer = useEmailStore(state => state.setComposer);
+
+  const handleReply = () => {
+    setComposer({
+      open: true,
+      defaultTo: email.sender_address,
+      defaultSubject: email.subject?.startsWith("Re: ") ? email.subject : `Re: ${email.subject}`,
+      defaultBody: `<br><br>On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote>${email.snippet || ""}</blockquote>`,
+      draftId: undefined
+    });
+  };
+
+  const handleForward = () => {
+    setComposer({
+      open: true,
+      defaultTo: '',
+      defaultSubject: email.subject?.startsWith("Fwd: ") ? email.subject : `Fwd: ${email.subject}`,
+      defaultBody: `<br><br>---------- Forwarded message ---------<br>From: ${email.sender_name} &lt;${email.sender_address}&gt;<br>Date: ${format(new Date(email.date), "PPP p")}<br>Subject: ${email.subject}<br><br>${email.snippet || ""}`,
+      draftId: undefined
+    });
+  };
 
   const handleContentClick = async (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -76,7 +98,19 @@ function EmailDetail() {
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
       <div className="p-6 border-b space-y-4">
-        <h2 className="text-2xl font-bold">{email.subject || "(No Subject)"}</h2>
+        <div className="flex justify-between items-start">
+          <h2 className="text-2xl font-bold flex-1 mr-4">{email.subject || "(No Subject)"}</h2>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleReply}>
+              <Reply className="w-4 h-4 mr-2" />
+              Reply
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleForward}>
+              <Forward className="w-4 h-4 mr-2" />
+              Forward
+            </Button>
+          </div>
+        </div>
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
             <User className="w-6 h-6" />

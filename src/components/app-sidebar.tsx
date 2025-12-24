@@ -13,16 +13,19 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem
 } from "@/components/ui/sidebar";
-import { CircleAlert, Inbox, Mail, Plus, Settings, Star } from "lucide-react";
+import { CircleAlert, Inbox, Mail, Plus, Settings, Star, PenLine } from "lucide-react";
 import { useMemo } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import { Gmail } from "@/components/ui/svgs/gmail";
 import { useEmailStore } from "@/lib/store";
+import { EmailComposer } from "./email-composer";
 
 export function AppSidebar() {
   const accounts = useEmailStore(state => state.accounts)
   const accountFolders = useEmailStore(state => state.accountFolders)
   const search = useSearch({ from: '/_inbox' })
+  const composer = useEmailStore(state => state.composer)
+  const setComposer = useEmailStore(state => state.setComposer)
 
   const totalUnread = useMemo(() => {
     return Object.values(accountFolders).flat().reduce((acc, folder) => acc + folder.unread_count, 0)
@@ -39,6 +42,25 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
+        <div className="px-4 py-4">
+            <button 
+                onClick={() => setComposer({ open: true, draftId: undefined, defaultTo: '', defaultSubject: '', defaultBody: '' })}
+                className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 py-2.5 rounded-xl font-semibold shadow-sm transition-all active:scale-[0.98]"
+            >
+                <PenLine className="w-4 h-4" />
+                Compose
+            </button>
+        </div>
+
+        <EmailComposer 
+          open={composer.open} 
+          onOpenChange={(open) => setComposer({ open })} 
+          draftId={composer.draftId}
+          defaultTo={composer.defaultTo}
+          defaultSubject={composer.defaultSubject}
+          defaultBody={composer.defaultBody}
+        />
+
         <SidebarGroup>
           <SidebarGroupLabel>Main</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -85,6 +107,14 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={search.filter === "drafts"}>
+                  <Link to="/" search={{ accountId: undefined, folderId: undefined, filter: "drafts" }}>
+                    <PenLine className="w-4 h-4" />
+                    <span>Drafts</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -98,18 +128,18 @@ export function AppSidebar() {
                   <SidebarMenuButton
                     asChild
                     tooltip={account.data.email}
-                    isActive={search.accountId === account.id && !search.folderId && !search.filter}
+                    isActive={search.accountId === account.data.id && !search.folderId && !search.filter}
                   >
-                    <Link to="/" search={{ accountId: account.id, folderId: undefined, filter: undefined }}>
+                    <Link to="/" search={{ accountId: account.data.id, folderId: undefined, filter: undefined }}>
                         {account.type === 'google' ? <Gmail className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
                         <span>{account.data.name || account.data.email}</span>
                     </Link>
                   </SidebarMenuButton>
                   <SidebarMenuSub>
-                    {account.id && accountFolders[account.id]?.map((folder) => (
+                    {account.data.id && accountFolders[account.data.id]?.map((folder) => (
                         <SidebarMenuSubItem key={folder.id}>
                             <SidebarMenuSubButton asChild isActive={search.folderId === folder.id}>
-                                <Link to="/" search={{ accountId: account.id, folderId: folder.id, filter: undefined }}>
+                                <Link to="/" search={{ accountId: account.data.id, folderId: folder.id, filter: undefined }}>
                                     <span className="truncate">{folder.name}</span>
                                     {folder.unread_count > 0 && (
                                         <span className="ml-auto text-[10px] bg-primary text-primary-foreground px-1.5 rounded-full">

@@ -42,9 +42,9 @@ Act as a desktop email client with **multiple inboxes in the same view** (Unifie
 
 ## Phase 4: Sending & Composition
 
-- [ ] **SMTP Integration**: Implement outgoing mail logic for different providers.
-- [ ] **Rich Text Editor**: A modern editor with support for formatting, signatures, and attachments.
-- [ ] **Drafts Management**: Local autosave and cross-provider draft syncing.
+- [x] **SMTP Integration**: Implement outgoing mail logic for different providers.
+- [x] **Rich Text Editor**: A modern editor with support for formatting, signatures, and attachments.
+- [x] **Drafts Management**: Local autosave and cross-provider draft syncing.
 
 ## Phase 5: Search & Performance
 

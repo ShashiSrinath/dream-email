@@ -129,7 +129,7 @@ impl SyncEngine {
     }
 
     async fn run_idle_loop(app_handle: &AppHandle, account: &Account) -> Result<(), String> {
-        let (account_config, imap_config) = Self::get_configs(account)?;
+        let (account_config, imap_config, _) = account.get_configs()?;
         let ctx_builder = ImapContextBuilder::new(account_config.clone(), imap_config);
 
         let context: ImapContext = BackendContextBuilder::build(ctx_builder)
@@ -151,43 +151,6 @@ impl SyncEngine {
             let (_shutdown_tx, mut shutdown_rx) = oneshot::channel();
             client.idle(&mut shutdown_rx).await.map_err(|e| e.to_string())?;
             info!("IDLE notification received for {}", account.email());
-        }
-    }
-
-    fn get_configs(account: &Account) -> Result<(Arc<AccountConfig>, Arc<ImapConfig>), String> {
-        match account {
-            Account::Google(google) => {
-                let client_id = std::env::var("GOOGLE_CLIENT_ID")
-                    .map_err(|_| "GOOGLE_CLIENT_ID not found in environment".to_string())?;
-                let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
-                    .map_err(|_| "GOOGLE_CLIENT_SECRET not found in environment".to_string())?;
-
-                let oauth2_config = OAuth2Config {
-                    client_id,
-                    client_secret: Some(Secret::new_raw(client_secret)),
-                    auth_url: "https://accounts.google.com/o/oauth2/auth".into(),
-                    token_url: "https://www.googleapis.com/oauth2/v3/token".into(),
-                    access_token: google.access_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),
-                    refresh_token: google.refresh_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),
-                    ..Default::default()
-                };
-
-                let account_config = Arc::new(AccountConfig {
-                    name: google.email.clone(),
-                    email: google.email.clone(),
-                    ..Default::default()
-                });
-
-                let imap_config = Arc::new(ImapConfig {
-                    host: "imap.gmail.com".into(),
-                    port: 993,
-                    login: google.email.clone(),
-                    auth: ImapAuthConfig::OAuth2(oauth2_config),
-                    ..Default::default()
-                });
-
-                Ok((account_config, imap_config))
-            }
         }
     }
 
@@ -322,7 +285,7 @@ impl SyncEngine {
     async fn sync_google_account(app_handle: &AppHandle, google: &GoogleAccount) -> Result<(), String> {
         info!("Syncing Google account: {}", google.email);
         let account = Account::Google(google.clone());
-        let (account_config, imap_config) = Self::get_configs(&account)?;
+        let (account_config, imap_config, _) = account.get_configs()?;
 
         let backend_builder = BackendBuilder::new(
             account_config.clone(),

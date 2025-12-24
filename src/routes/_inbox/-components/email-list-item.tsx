@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { format } from "date-fns";
 import { Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Email } from "@/lib/store";
+import { Email, useEmailStore } from "@/lib/store";
 
 interface EmailListItemProps {
   email: Email;
@@ -26,11 +26,30 @@ export function EmailListItem({
   virtualItem,
   measureElement,
 }: EmailListItemProps) {
+  const isDraft = email.folder_id === -1;
+  const setComposer = useEmailStore(state => state.setComposer);
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (isDraft) {
+      e.preventDefault();
+      // Open composer with draft data
+      // For now we assume the email object has enough info or we'd fetch it
+      setComposer({
+        open: true,
+        draftId: email.id,
+        defaultTo: email.sender_address === "(No Recipient)" ? "" : email.sender_address,
+        defaultSubject: email.subject === "(No Subject)" ? "" : email.subject || "",
+        defaultBody: email.snippet || "", // snippet might not be full body for drafts, but good enough for now
+      });
+    }
+  };
+
   return (
     <Link
-      to="/email/$emailId"
-      params={{ emailId: email.id.toString() }}
+      to={isDraft ? "." : "/email/$emailId"}
+      params={isDraft ? {} : { emailId: email.id.toString() }}
       search={(prev) => prev}
+      onClick={handleClick}
       data-index={virtualItem.index}
       ref={measureElement}
       style={{

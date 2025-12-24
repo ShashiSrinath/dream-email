@@ -3,9 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export type Account = {
-  id?: number;
   type: "google";
   data: {
+    id?: number;
     email: string;
     name?: string;
     picture?: string;
@@ -81,9 +81,19 @@ interface EmailState {
 
   // Actions
   markAsRead: (ids: number[]) => Promise<void>;
+
+  // Composer
+  composer: {
+    open: boolean;
+    draftId?: number;
+    defaultTo?: string;
+    defaultSubject?: string;
+    defaultBody?: string;
+  };
+  setComposer: (state: Partial<EmailState['composer']>) => void;
 }
 
-const initialState: Pick<EmailState, 'isInitialized' | 'accounts' | 'accountFolders' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds'> = {
+const initialState: Pick<EmailState, 'isInitialized' | 'accounts' | 'accountFolders' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds' | 'composer'> = {
   isInitialized: false,
   accounts: [],
   accountFolders: {},
@@ -93,6 +103,9 @@ const initialState: Pick<EmailState, 'isInitialized' | 'accounts' | 'accountFold
   lastSearchParams: null,
   selectedEmailId: null,
   selectedIds: new Set<number>(),
+  composer: {
+    open: false,
+  },
 };
 
 const PAGE_SIZE = 50;
@@ -109,9 +122,9 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       
       // Parallelize folder fetching for all accounts
       await Promise.all(accounts.map(async (account) => {
-        if (account.id) {
-          const folders = await invoke<Folder[]>("get_folders", { accountId: account.id });
-          foldersMap[account.id] = folders;
+        if (account.data.id) {
+          const folders = await invoke<Folder[]>("get_folders", { accountId: account.data.id });
+          foldersMap[account.data.id] = folders;
         }
       }));
       
@@ -136,13 +149,43 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     }
     
     try {
-      const fetchedEmails = await invoke<Email[]>("get_emails", { 
-        account_id: params.accountId || null, 
-        folder_id: params.folderId || null,
-        filter: params.filter || null,
-        limit,
-        offset: 0
-      });
+      let fetchedEmails: Email[] = [];
+
+      if (params.filter === "drafts") {
+        // Fetch from drafts table and map to Email type
+        const accounts = get().accounts;
+        const drafts: any[] = [];
+        
+        await Promise.all(accounts.map(async (account) => {
+            if (account.data.id) {
+                const accountDrafts = await invoke<any[]>("get_drafts", { accountId: account.data.id });
+                drafts.push(...accountDrafts);
+            }
+        }));
+
+        fetchedEmails = drafts.map(d => ({
+            id: d.id, // Note: This might conflict with email IDs, but for now it's okay if we are only showing drafts
+            account_id: d.account_id,
+            folder_id: -1, // Special ID for drafts
+            remote_id: `draft-${d.id}`,
+            message_id: null,
+            subject: d.subject || "(No Subject)",
+            sender_name: "Draft",
+            sender_address: d.to_address || "(No Recipient)",
+            date: d.updated_at,
+            flags: JSON.stringify(["draft"]),
+            snippet: d.body_html ? d.body_html.replace(/<[^>]*>/g, '').substring(0, 100) : null,
+            has_attachments: false
+        }));
+      } else {
+        fetchedEmails = await invoke<Email[]>("get_emails", { 
+          account_id: params.accountId || null, 
+          folder_id: params.folderId || null,
+          filter: params.filter || null,
+          limit,
+          offset: 0
+        });
+      }
       
       if (isRefresh) {
         // Smart Merge: Update existing items if they changed, add new ones at the top,
@@ -248,6 +291,8 @@ export const useEmailStore = create<EmailState>((set, get) => ({
   },
 
   clearSelection: () => set({ selectedIds: new Set() }),
+
+  setComposer: (state) => set((s) => ({ composer: { ...s.composer, ...state } })),
 
   markAsRead: async (ids) => {
     // 1. Optimistic Update

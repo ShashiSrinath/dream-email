@@ -8,6 +8,7 @@ use sqlx::sqlite::SqlitePool;
 use email::account::config::AccountConfig;
 use email::account::config::oauth2::OAuth2Config;
 use email::imap::config::{ImapConfig, ImapAuthConfig};
+use email::smtp::config::{SmtpConfig, SmtpAuthConfig};
 use secret::Secret;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,7 +51,7 @@ impl Account {
         }
     }
 
-    pub fn get_configs(&self) -> Result<(Arc<AccountConfig>, Arc<ImapConfig>), String> {
+    pub fn get_configs(&self) -> Result<(Arc<AccountConfig>, Arc<ImapConfig>, Arc<SmtpConfig>), String> {
         match self {
             Account::Google(google) => {
                 let client_id = std::env::var("GOOGLE_CLIENT_ID")
@@ -78,11 +79,19 @@ impl Account {
                     host: "imap.gmail.com".into(),
                     port: 993,
                     login: google.email.clone(),
-                    auth: ImapAuthConfig::OAuth2(oauth2_config),
+                    auth: ImapAuthConfig::OAuth2(oauth2_config.clone()),
                     ..Default::default()
                 });
 
-                Ok((account_config, imap_config))
+                let smtp_config = Arc::new(SmtpConfig {
+                    host: "smtp.gmail.com".into(),
+                    port: 465,
+                    login: google.email.clone(),
+                    auth: SmtpAuthConfig::OAuth2(oauth2_config),
+                    ..Default::default()
+                });
+
+                Ok((account_config, imap_config, smtp_config))
             }
         }
     }
