@@ -1,7 +1,8 @@
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{Manager, Emitter};
 use sqlx::SqlitePool;
 use serde::{Deserialize, Serialize};
 use crate::email_backend::accounts::manager::AccountManager;
+use crate::email_backend::sync::SyncEngine;
 use email::backend::BackendBuilder;
 use email::imap::ImapContextBuilder;
 use email::smtp::SmtpContextBuilder;
@@ -52,6 +53,211 @@ pub struct Draft {
     pub subject: Option<String>,
     pub body_html: Option<String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UnifiedCounts {
+    pub primary: i32,
+    pub others: i32,
+    pub spam: i32,
+    pub drafts: i32,
+}
+
+#[tauri::command]
+pub async fn refresh_folder<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    account_id: i64,
+    folder_id: i64,
+) -> Result<(), String> {
+    SyncEngine::refresh_folder(&app_handle, account_id, folder_id).await
+}
+
+#[tauri::command]
+pub async fn get_emails<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>, 
+    account_id: Option<i64>, 
+    view: Option<String>,
+    filter: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>
+) -> Result<Vec<Email>, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    
+    let mut query_parts = Vec::new();
+    let mut bindings = Vec::new();
+
+    if let Some(aid) = account_id {
+        query_parts.push("e.account_id = ?");
+        bindings.push(aid.to_string());
+    }
+
+    if let Some(v) = view {
+        match v.as_str() {
+            "primary" => query_parts.push("f.role = 'inbox'"),
+            "spam" => query_parts.push("f.role = 'spam'"),
+            "sent" => query_parts.push("f.role = 'sent'"),
+            "drafts" => query_parts.push("f.role = 'drafts'"),
+            "trash" => query_parts.push("f.role = 'trash'"),
+            "archive" => query_parts.push("f.role = 'archive'"),
+            "others" => query_parts.push("(f.role IS NULL OR f.role = '' OR f.role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive'))"),
+            _ => {}
+        }
+    } else {
+        // Default to primary if no view specified
+        query_parts.push("f.role = 'inbox'");
+    }
+
+    if let Some(f) = filter {
+        match f.as_str() {
+            "unread" => query_parts.push("e.flags NOT LIKE '%seen%'"),
+            "flagged" => query_parts.push("e.flags LIKE '%flagged%'"),
+            _ => {}
+        }
+    }
+
+    let where_clause = if query_parts.is_empty() {
+        "".to_string()
+    } else {
+        format!("WHERE {}", query_parts.join(" AND "))
+    };
+
+    let l = limit.unwrap_or(100);
+    let o = offset.unwrap_or(0);
+    
+    let group_by = "GROUP BY e.account_id, COALESCE(e.message_id, e.folder_id || '-' || e.remote_id)";
+
+    let query_str = format!(
+        "SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments 
+         FROM emails e 
+         JOIN folders f ON e.folder_id = f.id 
+         {} {} ORDER BY e.date DESC LIMIT {} OFFSET {}", 
+        where_clause, group_by, l, o
+    );
+    
+    let mut query = sqlx::query_as::<_, Email>(&query_str);
+    for binding in bindings {
+        query = query.bind(binding.parse::<i64>().unwrap());
+    }
+
+    let emails = query.fetch_all(&*pool).await.map_err(|e| e.to_string())?;
+
+    Ok(emails)
+}
+
+#[tauri::command]
+pub async fn get_unified_counts<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) -> Result<UnifiedCounts, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    
+    let row: (i32, i32, i32, i32) = sqlx::query_as(
+        "SELECT 
+            SUM(CASE WHEN role = 'inbox' THEN unread_count ELSE 0 END) as primary,
+            SUM(CASE WHEN (role IS NULL OR role = '' OR role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive')) THEN unread_count ELSE 0 END) as others,
+            SUM(CASE WHEN role = 'spam' THEN unread_count ELSE 0 END) as spam,
+            SUM(CASE WHEN role = 'drafts' THEN total_count ELSE 0 END) as drafts
+         FROM folders"
+    )
+    .fetch_one(&*pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(UnifiedCounts {
+        primary: row.0,
+        others: row.1,
+        spam: row.2,
+        drafts: row.3,
+    })
+}
+
+#[tauri::command]
+pub async fn get_email_by_id<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<Email, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    let email = sqlx::query_as::<_, Email>(
+        "SELECT id, account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags, snippet, has_attachments FROM emails WHERE id = ?"
+    )
+    .bind(email_id)
+    .fetch_one(&*pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(email)
+}
+
+#[tauri::command]
+pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<EmailContent, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    
+    let content: Option<EmailContent> = sqlx::query_as::<_, EmailContent>("SELECT body_text, body_html FROM emails WHERE id = ?")
+        .bind(email_id)
+        .fetch_optional(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(c) = content {
+        if c.body_text.is_some() || c.body_html.is_some() {
+            return Ok(c);
+        }
+    }
+
+    let email_info: (i64, String, String) = sqlx::query_as(
+        "SELECT e.account_id, e.remote_id, f.path FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
+    )
+    .bind(email_id)
+    .fetch_one(&*pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let (account_id, remote_id, folder_path) = email_info;
+    let manager = AccountManager::new(&app_handle).await?;
+    let account = manager.get_account_by_id(account_id).await?;
+    let (account_config, imap_config, _) = account.get_configs()?;
+
+    let backend_builder = BackendBuilder::new(
+        account_config.clone(),
+        ImapContextBuilder::new(account_config, imap_config),
+    );
+
+    let backend = backend_builder.build().await.map_err(|e| e.to_string())?;
+    
+    let id = Id::single(remote_id);
+    let messages = backend.get_messages(&folder_path, &id).await.map_err(|e| e.to_string())?;
+    let message = messages.first().ok_or("Email not found on server")?;
+
+    let parsed = message.parsed().map_err(|e| e.to_string())?;
+    let body_text = parsed.body_text(0).map(|b| b.to_string());
+    let body_html = parsed.body_html(0).map(|b| b.to_string());
+
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+    sqlx::query("UPDATE emails SET body_text = ?, body_html = ? WHERE id = ?")
+        .bind(&body_text)
+        .bind(&body_html)
+        .bind(email_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Ok(attachments) = message.attachments() {
+        for att in attachments {
+            sqlx::query(
+                "INSERT INTO attachments (email_id, filename, mime_type, size, data)
+                 VALUES (?, ?, ?, ?, ?)"
+            )
+            .bind(email_id)
+            .bind(&att.filename)
+            .bind(&att.mime)
+            .bind(att.body.len() as i64)
+            .bind(&att.body)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    Ok(EmailContent {
+        body_text,
+        body_html,
+    })
 }
 
 #[tauri::command]
@@ -126,7 +332,6 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
     let pool = app_handle.state::<SqlitePool>();
     
     for email_id in email_ids {
-        // 1. Get email info
         let email_info: Option<(i64, String, String, String)> = sqlx::query_as(
             "SELECT e.account_id, e.remote_id, f.path, e.flags FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
         )
@@ -140,12 +345,10 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
             None => continue,
         };
 
-        // If already seen, skip
         if current_flags.contains("\"seen\"") || current_flags.contains("seen") {
             continue;
         }
 
-        // 2. Update server if possible
         let manager = AccountManager::new(&app_handle).await?;
         if let Ok(account) = manager.get_account_by_id(account_id).await {
             if let Ok((account_config, imap_config, _)) = account.get_configs() {
@@ -161,10 +364,8 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
             }
         }
 
-        // 3. Update database
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
-        // Update flags
         let mut flags: Vec<String> = serde_json::from_str(&current_flags).unwrap_or_default();
         if !flags.contains(&"seen".to_string()) {
             flags.push("seen".to_string());
@@ -177,7 +378,6 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
             .await
             .map_err(|e| e.to_string())?;
 
-        // Update folder unread count
         sqlx::query("UPDATE folders SET unread_count = MAX(0, unread_count - 1) WHERE id = (SELECT folder_id FROM emails WHERE id = ?)")
             .bind(email_id)
             .execute(&mut *tx)
@@ -191,79 +391,6 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
     Ok(())
 }
 
-#[tauri::command]
-pub async fn get_emails<R: tauri::Runtime>(
-    app_handle: tauri::AppHandle<R>, 
-    account_id: Option<i64>, 
-    folder_id: Option<i64>,
-    filter: Option<String>,
-    limit: Option<u32>,
-    offset: Option<u32>
-) -> Result<Vec<Email>, String> {
-    let pool = app_handle.state::<SqlitePool>();
-    
-    let base_query = "SELECT id, account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags, snippet, has_attachments FROM emails";
-    let mut query_parts = Vec::new();
-    let mut bindings = Vec::new();
-
-    if let Some(aid) = account_id {
-        query_parts.push("account_id = ?");
-        bindings.push(aid.to_string());
-    }
-
-    if let Some(fid) = folder_id {
-        query_parts.push("folder_id = ?");
-        bindings.push(fid.to_string());
-    }
-
-    if let Some(f) = filter {
-        match f.as_str() {
-            "unread" => query_parts.push("flags NOT LIKE '%seen%'"),
-            "flagged" => query_parts.push("flags LIKE '%flagged%'"),
-            _ => {}
-        }
-    }
-
-    let where_clause = if query_parts.is_empty() {
-        "".to_string()
-    } else {
-        format!("WHERE {}", query_parts.join(" AND "))
-    };
-
-    let l = limit.unwrap_or(100);
-    let o = offset.unwrap_or(0);
-    
-    let group_by = if folder_id.is_none() {
-        "GROUP BY COALESCE(message_id, remote_id)"
-    } else {
-        ""
-    };
-
-    let query_str = format!("{} {} {} ORDER BY date DESC LIMIT {} OFFSET {}", base_query, where_clause, group_by, l, o);
-    
-    let mut query = sqlx::query_as::<_, Email>(&query_str);
-    for binding in bindings {
-        query = query.bind(binding.parse::<i64>().unwrap());
-    }
-
-    let emails = query.fetch_all(&*pool).await.map_err(|e| e.to_string())?;
-
-    Ok(emails)
-}
-
-#[tauri::command]
-pub async fn get_email_by_id<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<Email, String> {
-    let pool = app_handle.state::<SqlitePool>();
-    let email = sqlx::query_as::<_, Email>(
-        "SELECT id, account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags, snippet, has_attachments FROM emails WHERE id = ?"
-    )
-    .bind(email_id)
-    .fetch_one(&*pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(email)
-}
-
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Attachment {
     pub id: i64,
@@ -271,89 +398,6 @@ pub struct Attachment {
     pub filename: Option<String>,
     pub mime_type: Option<String>,
     pub size: i64,
-}
-
-#[tauri::command]
-pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<EmailContent, String> {
-    let pool = app_handle.state::<SqlitePool>();
-    
-    // 1. Check if we already have the content
-    let content: Option<EmailContent> = sqlx::query_as::<_, EmailContent>("SELECT body_text, body_html FROM emails WHERE id = ?")
-        .bind(email_id)
-        .fetch_optional(&*pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if let Some(c) = content {
-        if c.body_text.is_some() || c.body_html.is_some() {
-            return Ok(c);
-        }
-    }
-
-    // 2. Fetch from IMAP
-    let email_info: (i64, String, String) = sqlx::query_as(
-        "SELECT e.account_id, e.remote_id, f.path FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
-    )
-    .bind(email_id)
-    .fetch_one(&*pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let (account_id, remote_id, folder_path) = email_info;
-    let manager = AccountManager::new(&app_handle).await?;
-    let account = manager.get_account_by_id(account_id).await?;
-    let (account_config, imap_config, _) = account.get_configs()?;
-
-    let backend_builder = BackendBuilder::new(
-        account_config.clone(),
-        ImapContextBuilder::new(account_config, imap_config),
-    );
-
-    let backend = backend_builder.build().await.map_err(|e| e.to_string())?;
-    
-    let id = Id::single(remote_id);
-    let messages = backend.get_messages(&folder_path, &id).await.map_err(|e| e.to_string())?;
-    let message = messages.first().ok_or("Email not found on server")?;
-
-    let parsed = message.parsed().map_err(|e| e.to_string())?;
-    let body_text = parsed.body_text(0).map(|b| b.to_string());
-    let body_html = parsed.body_html(0).map(|b| b.to_string());
-
-    // 3. Save to database
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-
-    sqlx::query("UPDATE emails SET body_text = ?, body_html = ? WHERE id = ?")
-        .bind(&body_text)
-        .bind(&body_html)
-        .bind(email_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Extract and save attachments
-    if let Ok(attachments) = message.attachments() {
-        for att in attachments {
-            sqlx::query(
-                "INSERT INTO attachments (email_id, filename, mime_type, size, data)
-                 VALUES (?, ?, ?, ?, ?)"
-            )
-            .bind(email_id)
-            .bind(&att.filename)
-            .bind(&att.mime)
-            .bind(att.body.len() as i64)
-            .bind(&att.body)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-    }
-
-    tx.commit().await.map_err(|e| e.to_string())?;
-
-    Ok(EmailContent {
-        body_text,
-        body_html,
-    })
 }
 
 #[tauri::command]
@@ -390,7 +434,6 @@ pub async fn send_email<R: tauri::Runtime>(
     let account = manager.get_account_by_id(account_id).await?;
     let (account_config, _, smtp_config) = account.get_configs()?;
 
-    // Create a simple email message with HTML support
     let message = format!(
         "From: {}\r\nTo: {}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{}",
         account.email(),
@@ -427,10 +470,8 @@ mod tests {
     use crate::utils::test_utils::setup_test_db;
     use tauri::test::mock_builder;
     use chrono::Utc;
-    use sqlx::Row;
 
     async fn seed_test_data(pool: &SqlitePool) -> (i64, i64, i64) {
-        // Create account
         let row: (i64,) = sqlx::query_as("INSERT INTO accounts (email, account_type) VALUES (?, ?) RETURNING id")
             .bind("test@example.com")
             .bind("google")
@@ -439,17 +480,16 @@ mod tests {
             .unwrap();
         let account_id = row.0;
 
-        // Create folder
-        let row: (i64,) = sqlx::query_as("INSERT INTO folders (account_id, name, path) VALUES (?, ?, ?) RETURNING id")
+        let row: (i64,) = sqlx::query_as("INSERT INTO folders (account_id, name, path, role) VALUES (?, ?, ?, ?) RETURNING id")
             .bind(account_id)
             .bind("Inbox")
             .bind("INBOX")
+            .bind("inbox")
             .fetch_one(pool)
             .await
             .unwrap();
         let folder_id = row.0;
 
-        // Create email
         let row: (i64,) = sqlx::query_as(
             "INSERT INTO emails (account_id, folder_id, remote_id, subject, sender_address, date, flags, body_text)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
@@ -474,12 +514,12 @@ mod tests {
     async fn test_get_emails_integration() {
         use tauri::Manager;
         let pool = setup_test_db().await;
-        let (account_id, folder_id, _) = seed_test_data(&pool).await;
+        let (account_id, _, _) = seed_test_data(&pool).await;
         
         let app = mock_builder().build(tauri::generate_context!()).unwrap();
         app.manage(pool);
 
-        let emails = get_emails(app.handle().clone(), Some(account_id), Some(folder_id), None)
+        let emails = get_emails(app.handle().clone(), Some(account_id), Some("primary".to_string()), None, None, None)
             .await
             .expect("Failed to get emails");
 

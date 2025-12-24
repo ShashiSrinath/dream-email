@@ -49,6 +49,13 @@ export type Attachment = {
   size: number;
 };
 
+interface UnifiedCounts {
+  primary: number;
+  others: number;
+  spam: number;
+  drafts: number;
+}
+
 interface EmailState {
   // Initialization
   isInitialized: boolean;
@@ -58,14 +65,16 @@ interface EmailState {
   // Accounts & Folders
   accounts: Account[];
   accountFolders: Record<number, Folder[]>;
+  unifiedCounts: UnifiedCounts;
   fetchAccountsAndFolders: () => Promise<void>;
+  fetchUnifiedCounts: () => Promise<void>;
 
   // Emails List
   emails: Email[];
   loadingEmails: boolean;
   hasMore: boolean;
-  lastSearchParams: { accountId?: number; folderId?: number; filter?: string } | null;
-  fetchEmails: (params: { accountId?: number; folderId?: number; filter?: string }, isRefresh?: boolean) => Promise<void>;
+  lastSearchParams: { accountId?: number; view?: string; filter?: string } | null;
+  fetchEmails: (params: { accountId?: number; view?: string; filter?: string }, isRefresh?: boolean) => Promise<void>;
   fetchMoreEmails: () => Promise<void>;
   refreshEmails: () => Promise<void>;
 
@@ -93,10 +102,11 @@ interface EmailState {
   setComposer: (state: Partial<EmailState['composer']>) => void;
 }
 
-const initialState: Pick<EmailState, 'isInitialized' | 'accounts' | 'accountFolders' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds' | 'composer'> = {
+const initialState: Pick<EmailState, 'isInitialized' | 'accounts' | 'accountFolders' | 'unifiedCounts' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds' | 'composer'> = {
   isInitialized: false,
   accounts: [],
   accountFolders: {},
+  unifiedCounts: { primary: 0, others: 0, spam: 0, drafts: 0 },
   emails: [],
   loadingEmails: false,
   hasMore: true,
@@ -129,8 +139,18 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       }));
       
       set({ accountFolders: foldersMap });
+      get().fetchUnifiedCounts();
     } catch (error) {
       console.error("Failed to fetch accounts/folders:", error);
+    }
+  },
+
+  fetchUnifiedCounts: async () => {
+    try {
+      const counts = await invoke<UnifiedCounts>("get_unified_counts");
+      set({ unifiedCounts: counts });
+    } catch (error) {
+      console.error("Failed to fetch unified counts:", error);
     }
   },
 
@@ -139,6 +159,30 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     if (loadingEmails && !isRefresh) return;
 
     set({ loadingEmails: true, lastSearchParams: params });
+
+    // Background refresh
+    if (params.accountId) {
+      // Find inbox folder for this account
+      const folders = get().accountFolders[params.accountId];
+      const inbox = folders?.find(f => f.role === 'inbox' || f.name.toLowerCase() === 'inbox');
+      if (inbox) {
+        invoke("refresh_folder", { accountId: params.accountId, folderId: inbox.id })
+          .catch(err => console.error("Background refresh failed:", err));
+      }
+    } else if (!params.view || params.view === "primary") {
+      // Unified Inbox: refresh all account inboxes
+      const { accounts, accountFolders } = get();
+      accounts.forEach(account => {
+        if (account.data.id) {
+          const folders = accountFolders[account.data.id];
+          const inbox = folders?.find(f => f.role === 'inbox' || f.name.toLowerCase() === 'inbox');
+          if (inbox) {
+            invoke("refresh_folder", { accountId: account.data.id, folderId: inbox.id })
+              .catch(err => console.error("Background refresh failed:", err));
+          }
+        }
+      });
+    }
     
     // If refreshing, we want to fetch at least as many as we already have 
     // to avoid the list shrinking and causing scroll jumps
@@ -151,7 +195,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     try {
       let fetchedEmails: Email[] = [];
 
-      if (params.filter === "drafts") {
+      if (params.view === "drafts") {
         // Fetch from drafts table and map to Email type
         const accounts = get().accounts;
         const drafts: any[] = [];
@@ -180,7 +224,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       } else {
         fetchedEmails = await invoke<Email[]>("get_emails", { 
           account_id: params.accountId || null, 
-          folder_id: params.folderId || null,
+          view: params.view || "primary",
           filter: params.filter || null,
           limit,
           offset: 0
@@ -188,8 +232,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       }
       
       if (isRefresh) {
-        // Smart Merge: Update existing items if they changed, add new ones at the top,
-        // but preserve references for unchanged items to help React/Virtualizer.
+        // Smart Merge
         set(state => {
           const emailMap = new Map(state.emails.map(e => [e.id, e]));
           let changed = false;
@@ -197,18 +240,16 @@ export const useEmailStore = create<EmailState>((set, get) => ({
           const merged = fetchedEmails.map(newEmail => {
             const existing = emailMap.get(newEmail.id);
             if (existing) {
-              // Deep compare important fields (simplified here)
               if (existing.flags !== newEmail.flags || existing.subject !== newEmail.subject) {
                 changed = true;
                 return newEmail;
               }
-              return existing; // Keep reference!
+              return existing; 
             }
             changed = true;
             return newEmail;
           });
 
-          // Also check if some were removed or if length changed
           if (merged.length !== state.emails.length) changed = true;
 
           return changed ? { emails: merged, hasMore: fetchedEmails.length === limit } : {};
@@ -231,7 +272,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     try {
       const newEmails = await invoke<Email[]>("get_emails", {
         account_id: lastSearchParams.accountId || null,
-        folder_id: lastSearchParams.folderId || null,
+        view: lastSearchParams.view || "primary",
         filter: lastSearchParams.filter || null,
         limit: PAGE_SIZE,
         offset: emails.length

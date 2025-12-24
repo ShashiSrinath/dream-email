@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use crate::email_backend::accounts::google::GoogleAccount;
 use crate::utils::security::EncryptedStore;
 use std::path::PathBuf;

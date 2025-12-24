@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { format } from "date-fns";
 import { Paperclip } from "lucide-react";
+import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Email, useEmailStore } from "@/lib/store";
 
@@ -28,6 +29,8 @@ export function EmailListItem({
 }: EmailListItemProps) {
   const isDraft = email.folder_id === -1;
   const setComposer = useEmailStore(state => state.setComposer);
+  const accounts = useEmailStore(state => state.accounts);
+  const account = useMemo(() => accounts.find(a => a.data.id === email.account_id), [accounts, email.account_id]);
 
   const handleClick = (e: React.MouseEvent) => {
     if (isDraft) {
@@ -83,9 +86,17 @@ export function EmailListItem({
       </div>
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex justify-between items-start">
-          <span className={cn("font-medium truncate text-sm", isUnread && "text-primary font-bold")}>
-            {email.sender_name || email.sender_address}
-          </span>
+          <div className="flex items-center gap-1.5 overflow-hidden">
+            <span className={cn("font-medium truncate text-sm", isUnread && "text-primary font-bold")}>
+              {email.sender_name || email.sender_address}
+            </span>
+            {account && (
+              <div 
+                title={account.data.email}
+                className="w-1.5 h-1.5 rounded-full bg-primary/40 flex-shrink-0" 
+              />
+            )}
+          </div>
           <div className="flex items-center gap-2">
             {email.has_attachments && <Paperclip className="w-3 h-3 text-muted-foreground" />}
             <span className="text-[10px] text-muted-foreground whitespace-nowrap">

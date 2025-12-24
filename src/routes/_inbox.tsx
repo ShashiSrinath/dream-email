@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useParams } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { z } from "zod";
 import { useEmailStore } from "@/lib/store";
 import { EmailListToolbar } from "./_inbox/-components/email-list-toolbar";
@@ -8,7 +8,7 @@ import { EmailList } from "./_inbox/-components/email-list";
 
 const inboxSearchSchema = z.object({
   accountId: z.number().optional(),
-  folderId: z.number().optional(),
+  view: z.string().optional(),
   filter: z.string().optional(),
 });
 
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/_inbox")({
 });
 
 export function InboxLayout() {
-  const { accountId, folderId, filter } = Route.useSearch();
+  const { accountId, view, filter } = Route.useSearch();
   // @ts-ignore - this might not be available yet but will be in child routes
   const { emailId } = useParams({ strict: false });
   const selectedEmailId = emailId ? parseInt(emailId) : null;
@@ -37,10 +37,20 @@ export function InboxLayout() {
   const isSomeSelected = selectedIds.size > 0 && selectedIds.size < emails.length;
 
   useEffect(() => {
-    fetchEmails({ accountId, folderId, filter });
-  }, [accountId, folderId, filter, fetchEmails]);
+    fetchEmails({ accountId, view, filter });
+  }, [accountId, view, filter, fetchEmails]);
 
-  const title = filter === "unread" ? "Unread" : filter === "flagged" ? "Flagged" : folderId ? "Folder" : accountId ? "Account" : "Unified Inbox";
+  const title = useMemo(() => {
+    if (filter === "unread") return "Unread";
+    if (filter === "flagged") return "Flagged";
+    if (view === "others") return "Others";
+    if (view === "spam") return "Spam";
+    if (view === "sent") return "Sent";
+    if (view === "drafts") return "Drafts";
+    if (view === "trash") return "Trash";
+    if (view === "archive") return "Archive";
+    return "Inbox";
+  }, [view, filter]);
 
   return (
     <div className="flex h-screen overflow-hidden">

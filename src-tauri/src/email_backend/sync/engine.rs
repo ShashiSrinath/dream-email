@@ -2,15 +2,12 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::sync::Arc;
 use std::num::NonZeroU32;
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{Manager, Emitter};
 use crate::email_backend::accounts::manager::{AccountManager, Account};
 use crate::email_backend::accounts::google::GoogleAccount;
 use tokio::time::sleep;
 use tokio::sync::{oneshot, Mutex};
 use log::{info, error};
-use email::account::config::AccountConfig;
-use email::account::config::oauth2::OAuth2Config;
-use email::imap::config::{ImapConfig, ImapAuthConfig};
 use email::imap::{ImapContext, ImapContextBuilder, ImapClient};
 use email::backend::context::BackendContextBuilder;
 use email::backend::BackendBuilder;
@@ -18,17 +15,16 @@ use email::folder::list::ListFolders;
 use email::envelope::Envelopes;
 use imap_client::tasks::tasks::select::SelectDataUnvalidated;
 use sqlx::SqlitePool;
-use secret::Secret;
 
-pub struct SyncEngine {
-    app_handle: AppHandle,
+pub struct SyncEngine<R: tauri::Runtime = tauri::Wry> {
+    app_handle: tauri::AppHandle<R>,
     idle_senders: Arc<Mutex<HashMap<i64, oneshot::Sender<()>>>>,
 }
 
 const SYNC_BATCH_SIZE: u32 = 500;
 
-impl SyncEngine {
-    pub fn new(app_handle: AppHandle) -> Self {
+impl<R: tauri::Runtime> SyncEngine<R> {
+    pub fn new(app_handle: tauri::AppHandle<R>) -> Self {
         Self { 
             app_handle,
             idle_senders: Arc::new(Mutex::new(HashMap::new())),
@@ -69,8 +65,40 @@ impl SyncEngine {
         }
     }
 
+    pub async fn refresh_folder(app_handle: &tauri::AppHandle<R>, account_id: i64, folder_id: i64) -> Result<(), String> {
+        let pool = app_handle.state::<SqlitePool>();
+        let folder_info: (String, Option<String>) = sqlx::query_as("SELECT path, role FROM folders WHERE id = ?")
+            .bind(folder_id)
+            .fetch_one(&*pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let (folder_path, folder_role) = folder_info;
+
+        let manager = AccountManager::new(app_handle).await?;
+        let account = manager.get_account_by_id(account_id).await?;
+        let (account_config, imap_config, _) = account.get_configs()?;
+
+        let backend_builder = BackendBuilder::new(
+            account_config.clone(),
+            ImapContextBuilder::new(account_config, imap_config),
+        );
+
+        let backend = backend_builder.build().await.map_err(|e| e.to_string())?;
+        let context = (*backend.context).clone();
+        let mut client = context.client().await;
+        
+        let folder_data = client.examine_mailbox(&folder_path).await.map_err(|e| e.to_string())?;
+        
+        Self::sync_folder(app_handle, &mut *client, &account, &folder_path, folder_role, &folder_data).await?;
+        
+        let _ = app_handle.emit("emails-updated", account_id);
+        
+        Ok(())
+    }
+
     async fn save_envelopes(
-        app_handle: &AppHandle,
+        app_handle: &tauri::AppHandle<R>,
         account_id: i64,
         folder_id: i64,
         envelopes: Envelopes,
@@ -100,7 +128,7 @@ impl SyncEngine {
         Ok(())
     }
 
-    async fn start_idle_for_account(app_handle: AppHandle, account: Account, idle_senders: Arc<Mutex<HashMap<i64, oneshot::Sender<()>>>>) {
+    async fn start_idle_for_account(app_handle: tauri::AppHandle<R>, account: Account, idle_senders: Arc<Mutex<HashMap<i64, oneshot::Sender<()>>>>) {
         let account_id = match account.id() {
             Some(id) => id,
             None => return,
@@ -127,7 +155,7 @@ impl SyncEngine {
         }
     }
 
-    async fn run_idle_loop(app_handle: &AppHandle, account: &Account) -> Result<(), String> {
+    async fn run_idle_loop(app_handle: &tauri::AppHandle<R>, account: &Account) -> Result<(), String> {
         let (account_config, imap_config, _) = account.get_configs()?;
         let ctx_builder = ImapContextBuilder::new(account_config.clone(), imap_config);
 
@@ -144,7 +172,7 @@ impl SyncEngine {
             let folder_data = client.examine_mailbox("INBOX").await.map_err(|e| e.to_string())?;
             
             // Sync current state
-            Self::sync_folder(app_handle, &mut *client, account, "INBOX", &folder_data).await?;
+            Self::sync_folder(app_handle, &mut *client, account, "INBOX", Some("inbox".to_string()), &folder_data).await?;
             let _ = app_handle.emit("emails-updated", account.id());
 
             let (_shutdown_tx, mut shutdown_rx) = oneshot::channel();
@@ -154,10 +182,11 @@ impl SyncEngine {
     }
 
     async fn sync_folder(
-        app_handle: &AppHandle, 
+        app_handle: &tauri::AppHandle<R>, 
         client: &mut ImapClient, 
         account: &Account, 
         folder_name: &str,
+        role: Option<String>,
         folder_data: &SelectDataUnvalidated
     ) -> Result<(), String> {
         let account_id = account.id().ok_or("Account ID missing")?;
@@ -168,8 +197,8 @@ impl SyncEngine {
         let total_count = folder_data.exists.unwrap_or(0) as i64;
 
         // 1. Get stored folder info
-        let stored_folder: Option<(i64, i64, i64)> = sqlx::query_as(
-            "SELECT id, uid_validity, uid_next FROM folders WHERE account_id = ? AND path = ?"
+        let stored_folder: Option<(i64, i64, i64, Option<String>)> = sqlx::query_as(
+            "SELECT id, uid_validity, uid_next, role FROM folders WHERE account_id = ? AND path = ?"
         )
         .bind(account_id)
         .bind(folder_name)
@@ -178,7 +207,20 @@ impl SyncEngine {
         .map_err(|e| e.to_string())?;
 
         let (folder_id, stored_uid_validity, stored_uid_next) = match stored_folder {
-            Some(row) => (row.0, row.1, row.2),
+            Some((id, uv, un, stored_role)) => {
+                // If role changed or was empty, update it
+                if let Some(ref new_role) = role {
+                    if stored_role.as_ref() != Some(new_role) {
+                        sqlx::query("UPDATE folders SET role = ? WHERE id = ?")
+                            .bind(new_role)
+                            .bind(id)
+                            .execute(&*pool)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                (id, uv, un)
+            },
             None => {
                 // Folder not in DB yet, insert it
                 let row: (i64,) = sqlx::query_as(
@@ -189,7 +231,7 @@ impl SyncEngine {
                 .bind(account_id)
                 .bind(folder_name)
                 .bind(folder_name)
-                .bind("")
+                .bind(role.unwrap_or_default())
                 .bind(current_uid_validity)
                 .bind(current_uid_next)
                 .bind(total_count)
@@ -259,7 +301,7 @@ impl SyncEngine {
         Ok(())
     }
 
-    async fn sync_all_accounts(app_handle: &AppHandle) -> Result<(), String> {
+    async fn sync_all_accounts(app_handle: &tauri::AppHandle<R>) -> Result<(), String> {
         let manager = AccountManager::new(app_handle).await?;
         let registry = manager.load().await?;
         
@@ -272,7 +314,7 @@ impl SyncEngine {
         Ok(())
     }
 
-    async fn sync_account(app_handle: &AppHandle, account: &Account) -> Result<(), String> {
+    async fn sync_account(app_handle: &tauri::AppHandle<R>, account: &Account) -> Result<(), String> {
         match account {
             Account::Google(google) => {
                 Self::sync_google_account(app_handle, google).await?;
@@ -281,7 +323,7 @@ impl SyncEngine {
         Ok(())
     }
 
-    async fn sync_google_account(app_handle: &AppHandle, google: &GoogleAccount) -> Result<(), String> {
+    async fn sync_google_account(app_handle: &tauri::AppHandle<R>, google: &GoogleAccount) -> Result<(), String> {
         info!("Syncing Google account: {}", google.email);
         let account = Account::Google(google.clone());
         let (account_config, imap_config, _) = account.get_configs()?;
@@ -299,9 +341,29 @@ impl SyncEngine {
         let context = (*backend.context).clone();
 
         for folder in folders {
+            let role = if folder.is_inbox() {
+                Some("inbox".to_string())
+            } else if folder.is_sent() {
+                Some("sent".to_string())
+            } else if folder.is_drafts() {
+                Some("drafts".to_string())
+            } else if folder.is_trash() {
+                Some("trash".to_string())
+            } else {
+                // Try to detect other roles from name if kind is not specific enough
+                let name = folder.name.to_lowercase();
+                if name.contains("spam") || name.contains("junk") {
+                    Some("spam".to_string())
+                } else if name.contains("archive") || name.contains("all mail") {
+                    Some("archive".to_string())
+                } else {
+                    None
+                }
+            };
+
             let mut client = context.client().await;
             let folder_data = client.examine_mailbox(&folder.name).await.map_err(|e| e.to_string())?;
-            Self::sync_folder(app_handle, &mut *client, &account, &folder.name, &folder_data).await?;
+            Self::sync_folder(app_handle, &mut *client, &account, &folder.name, role, &folder_data).await?;
         }
 
         Ok(())

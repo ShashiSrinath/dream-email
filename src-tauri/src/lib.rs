@@ -1,5 +1,5 @@
 use crate::email_backend::accounts::commands::{login_with_google, get_accounts, remove_account};
-use crate::email_backend::emails::commands::{get_emails, get_folders, get_email_content, get_attachments, get_attachment_data, mark_as_read, get_email_by_id, send_email, save_draft, get_drafts, delete_draft, get_draft_by_id};
+use crate::email_backend::emails::commands::{get_emails, get_folders, refresh_folder, get_unified_counts, get_email_content, get_attachments, get_attachment_data, mark_as_read, get_email_by_id, send_email, save_draft, get_drafts, delete_draft, get_draft_by_id};
 use crate::email_backend::sync::SyncEngine;
 use crate::db::setup::setup_database;
 use tauri::Manager;
@@ -38,6 +38,8 @@ pub fn run() {
             remove_account,
             get_emails,
             get_folders,
+            refresh_folder,
+            get_unified_counts,
             get_email_content,
             get_attachments,
             get_attachment_data,
