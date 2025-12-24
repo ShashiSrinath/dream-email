@@ -299,7 +299,8 @@ export const useEmailStore = create<EmailState>((set, get) => ({
             if (existing) {
               if (
                 existing.flags !== newEmail.flags ||
-                existing.subject !== newEmail.subject
+                existing.subject !== newEmail.subject ||
+                existing.snippet !== newEmail.snippet
               ) {
                 changed = true;
                 return newEmail;
@@ -309,6 +310,14 @@ export const useEmailStore = create<EmailState>((set, get) => ({
             changed = true;
             return newEmail;
           });
+
+          // If we fetched fewer items than we currently have, 
+          // we should keep the ones we already have that were beyond the limit
+          // to avoid the list shrinking and causing scroll jumps.
+          if (state.emails.length > fetchedEmails.length) {
+            const extraItems = state.emails.slice(fetchedEmails.length);
+            merged.push(...extraItems);
+          }
 
           if (merged.length !== state.emails.length) changed = true;
 

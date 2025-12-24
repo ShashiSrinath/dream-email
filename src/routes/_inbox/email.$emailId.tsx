@@ -3,13 +3,14 @@ import { Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { format } from "date-fns";
-import { Mail, User, Clock, Paperclip, Reply, Forward } from "lucide-react";
+import { Mail, Clock, Paperclip, Reply, Forward } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import DOMPurify from "dompurify";
 import { useEmailStore, Attachment, EmailContent, Email } from "@/lib/store";
 import { SenderSidebar } from "./-components/sender-sidebar";
+import { SenderAvatar } from "@/components/sender-avatar";
 
 export const Route = createFileRoute("/_inbox/email/$emailId")({
   loader: async ({ params: { emailId } }) => {
@@ -114,9 +115,11 @@ function EmailDetail() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
-              <User className="w-6 h-6" />
-            </div>
+            <SenderAvatar 
+              address={email.sender_address}
+              name={email.sender_name}
+              avatarClassName="w-10 h-10"
+            />
             <div className="flex-1 min-w-0">
               <div className="flex justify-between items-center gap-2">
                 <span className="font-semibold block truncate">

@@ -125,7 +125,7 @@ pub async fn get_emails<R: tauri::Runtime>(
     }
 
     query_builder.push(" GROUP BY e.account_id, COALESCE(e.message_id, e.folder_id || '-' || e.remote_id)");
-    query_builder.push(" ORDER BY e.date DESC LIMIT ");
+    query_builder.push(" ORDER BY e.date DESC, e.id DESC LIMIT ");
     query_builder.push_bind(limit.unwrap_or(100) as i64);
     query_builder.push(" OFFSET ");
     query_builder.push_bind(offset.unwrap_or(0) as i64);
@@ -596,7 +596,7 @@ pub async fn search_emails<R: tauri::Runtime>(
     }
 
     query_builder.push(" GROUP BY e.account_id, COALESCE(e.message_id, e.folder_id || '-' || e.remote_id)");
-    query_builder.push(" ORDER BY e.date DESC LIMIT ");
+    query_builder.push(" ORDER BY e.date DESC, e.id DESC LIMIT ");
     query_builder.push_bind(limit.unwrap_or(100) as i64);
     query_builder.push(" OFFSET ");
     query_builder.push_bind(offset.unwrap_or(0) as i64);

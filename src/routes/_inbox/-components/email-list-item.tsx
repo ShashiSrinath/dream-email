@@ -1,11 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import { format } from "date-fns";
-import { Paperclip, Check, Building2 } from "lucide-react";
+import { Paperclip, Check } from "lucide-react";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Email, useEmailStore } from "@/lib/store";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useSenderInfo } from "@/hooks/use-sender-info";
+import { SenderAvatar } from "@/components/sender-avatar";
 
 interface EmailListItemProps {
   email: Email;
@@ -35,7 +34,6 @@ export function EmailListItem({
   const setComposer = useEmailStore(state => state.setComposer);
   const accounts = useEmailStore(state => state.accounts);
   const account = useMemo(() => accounts.find(a => a.data.id === email.account_id), [accounts, email.account_id]);
-  const { sender } = useSenderInfo(email.sender_address);
 
   const handleClick = (e: React.MouseEvent) => {
     if (isDraft) {
@@ -59,44 +57,6 @@ export function EmailListItem({
       onToggleSelect(email.id);
     }
   };
-
-  const initials = useMemo(() => {
-    // If it's a corporate sender without a clear display name, use the domain name for initials
-    if (sender?.company && (!email.sender_name || email.sender_name === email.sender_address)) {
-      const part = sender.company.split('.')[0];
-      if (part === 'www' && sender.company.split('.').length > 1) {
-        return sender.company.split('.')[1].substring(0, 2).toUpperCase();
-      }
-      return part.substring(0, 2).toUpperCase();
-    }
-
-    const name = email.sender_name || email.sender_address;
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .substring(0, 2)
-      .toUpperCase();
-  }, [email.sender_name, email.sender_address, sender?.company]);
-
-  // Generate a consistent background color based on sender address
-  const bgColor = useMemo(() => {
-    const colors = [
-      "bg-red-100 text-red-700",
-      "bg-blue-100 text-blue-700",
-      "bg-green-100 text-green-700",
-      "bg-yellow-100 text-yellow-700",
-      "bg-purple-100 text-purple-700",
-      "bg-pink-100 text-pink-700",
-      "bg-indigo-100 text-indigo-700",
-      "bg-orange-100 text-orange-700",
-    ];
-    let hash = 0;
-    for (let i = 0; i < email.sender_address.length; i++) {
-      hash = email.sender_address.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
-  }, [email.sender_address]);
 
   return (
     <Link
@@ -125,40 +85,14 @@ export function EmailListItem({
           onClick={handleAvatarClick}
           className="relative cursor-pointer"
         >
-          <Avatar className={cn(
-            "size-9 transition-all duration-400 ease-in-out bg-background",
-            isSelected ? "scale-0 opacity-0" : "scale-100 opacity-100"
-          )}>
-            {sender?.avatar_url && !sender.avatar_url.includes('google.com') && (
-              <AvatarImage src={sender.avatar_url} alt={sender.name || email.sender_name || ""} />
+          <SenderAvatar 
+            address={email.sender_address}
+            name={email.sender_name}
+            avatarClassName={cn(
+              "transition-all duration-400 ease-in-out",
+              isSelected ? "scale-0 opacity-0" : "scale-100 opacity-100"
             )}
-            {sender?.company && (
-              <>
-                {/* DuckDuckGo often has better transparent logos */}
-                <AvatarImage 
-                  src={`https://icons.duckduckgo.com/ip3/${sender.company}.ico`} 
-                  alt={sender.company} 
-                  className="p-1"
-                />
-                <AvatarImage 
-                  src={`https://www.google.com/s2/favicons?domain=${sender.company}&sz=128`} 
-                  alt={sender.company} 
-                  className="p-1"
-                />
-              </>
-            )}
-            <AvatarFallback className={cn(
-              "text-[10px] font-bold", 
-              sender?.company ? "bg-slate-100 text-slate-600 border" : bgColor
-            )}>
-              {sender?.company ? (
-                <div className="flex flex-col items-center justify-center leading-none scale-90">
-                  <Building2 className="size-2.5 mb-0.5 opacity-60" />
-                  {initials}
-                </div>
-              ) : initials}
-            </AvatarFallback>
-          </Avatar>
+          />
           
           <div className={cn(
             "absolute inset-0 flex items-center justify-center rounded-full transition-all duration-400 ease-in-out border-2",

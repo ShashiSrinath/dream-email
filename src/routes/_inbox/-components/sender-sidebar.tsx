@@ -1,12 +1,13 @@
 import { useSenderInfo } from "@/hooks/use-sender-info";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Github, Linkedin, Twitter, Globe, MapPin, Briefcase, History, Building2, Check } from "lucide-react";
+import { Github, Linkedin, Twitter, Globe, MapPin, Briefcase, History, Building2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Email, Domain } from "@/lib/store";
 import { format } from "date-fns";
 import { Link } from "@tanstack/react-router";
+import { SenderAvatar } from "@/components/sender-avatar";
 
 export function SenderSidebar({ address, name }: { address: string; name?: string | null }) {
   const { sender, loading } = useSenderInfo(address);
@@ -41,31 +42,17 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
     );
   }
 
-  const initials = (name || address)
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .substring(0, 2)
-    .toUpperCase();
-
   return (
     <div className="w-[320px] max-w-[320px] border-l flex flex-col h-full bg-muted/10 hidden xl:flex shrink-0 min-w-0 overflow-x-hidden">
       <ScrollArea className="flex-1 min-h-0 overflow-x-hidden">
         <div className="p-6 space-y-8 min-w-0 overflow-x-hidden">
           <div className="flex flex-col items-center text-center space-y-4 min-w-0 w-full overflow-hidden">
-            <div className="relative">
-              <Avatar className="w-24 h-24 border-2 border-background shadow-sm shrink-0">
-                <AvatarImage src={sender?.avatar_url || ""} alt={name || ""} />
-                <AvatarFallback className="text-2xl font-semibold bg-primary/10 text-primary">
-                  {initials}
-                </AvatarFallback>
-              </Avatar>
-              {sender?.is_verified && (
-                <div className="absolute -bottom-1 -right-1 bg-primary text-primary-foreground rounded-full p-1 border-2 border-background shadow-sm">
-                  <Check className="w-3.5 h-3.5" />
-                </div>
-              )}
-            </div>
+            <SenderAvatar 
+              address={address}
+              name={name || sender?.name}
+              avatarClassName="w-24 h-24 border-2 border-background shadow-sm text-2xl"
+              showVerification={true}
+            />
             <div className="space-y-1 w-full min-w-0 px-2">
               <h3 className="font-bold text-lg break-words line-clamp-2">{name || sender?.name || address}</h3>
               {sender?.job_title && (
