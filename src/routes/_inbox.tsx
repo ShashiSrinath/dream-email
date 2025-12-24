@@ -7,7 +7,7 @@ import { EmailListActions } from "./_inbox/-components/email-list-actions";
 import { EmailList } from "./_inbox/-components/email-list";
 
 const inboxSearchSchema = z.object({
-  accountId: z.number().optional(),
+  account_id: z.number().optional(),
   view: z.string().optional(),
   filter: z.string().optional(),
   search: z.string().optional(),
@@ -20,7 +20,7 @@ export const Route = createFileRoute("/_inbox")({
 
 export function InboxLayout() {
   const searchParams = Route.useSearch();
-  const { accountId, view, filter, search } = searchParams;
+  const { account_id, view, filter, search } = searchParams;
   const navigate = Route.useNavigate();
   const [localSearch, setLocalSearch] = useState(search || "");
 
@@ -44,8 +44,8 @@ export function InboxLayout() {
     selectedIds.size > 0 && selectedIds.size < emails.length;
 
   useEffect(() => {
-    fetchEmails({ accountId, view, filter, search });
-  }, [accountId, view, filter, search, fetchEmails]);
+    fetchEmails({ account_id, view, filter, search });
+  }, [account_id, view, filter, search, fetchEmails]);
 
   // Sync local search with URL search param
   useEffect(() => {

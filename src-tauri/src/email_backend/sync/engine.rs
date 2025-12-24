@@ -132,7 +132,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             let res = sqlx::query(
                 "INSERT INTO emails (account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(account_id, remote_id) DO UPDATE SET 
+                 ON CONFLICT(folder_id, remote_id) DO UPDATE SET 
                     flags=excluded.flags"
             )
             .bind(account_id)
@@ -149,6 +149,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             .map_err(|e: sqlx::Error| e.to_string())?;
 
             if notify && res.rows_affected() > 0 && !flags.contains(&"seen".to_string()) {
+                info!("Sending notification for new email: {}", env.subject);
                 let _ = app_handle.notification()
                     .builder()
                     .title(format!("New Email: {}", env.subject))
@@ -206,9 +207,19 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             Self::sync_folder(app_handle, &mut *client, account, "INBOX", Some("inbox".to_string()), &folder_data).await?;
             let _ = app_handle.emit("emails-updated", account.id());
 
-            let (_shutdown_tx, mut shutdown_rx) = oneshot::channel();
+            let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+            
+            // Start a timer to stop IDLE after 29 minutes (IMAP IDLE should be refreshed every 29 mins)
+            let app_handle_timer = app_handle.clone();
+            let account_email = account.email().to_string();
+            tauri::async_runtime::spawn(async move {
+                sleep(Duration::from_secs(29 * 60)).await;
+                let _ = shutdown_tx.send(());
+                info!("Refreshing IDLE for {} after timeout", account_email);
+            });
+
             client.idle(&mut shutdown_rx).await.map_err(|e| e.to_string())?;
-            info!("IDLE notification received for {}", account.email());
+            info!("IDLE notification received or timeout for {}", account.email());
         }
     }
 

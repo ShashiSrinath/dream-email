@@ -560,7 +560,12 @@ pub async fn search_emails<R: tauri::Runtime>(
     // FTS5 works better with a '*' for prefix matching if the user is typing
     // We wrap the term in double quotes for phrase matching and add * for prefix matching
     // Example: "query"*
-    let fts_query = format!("\"{}\"*", query_text.trim().replace("\"", "\"\""));
+    let fts_query = query_text.trim().replace("\"", "\"\"");
+    let fts_query = if fts_query.contains(' ') {
+        format!("\"{}\"", fts_query)
+    } else {
+        format!("*{}*", fts_query)
+    };
 
     let mut query_builder: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new(
         "SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments 

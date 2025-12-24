@@ -74,14 +74,14 @@ interface EmailState {
   loadingEmails: boolean;
   hasMore: boolean;
   lastSearchParams: {
-    accountId?: number;
+    account_id?: number;
     view?: string;
     filter?: string;
     search?: string;
   } | null;
   fetchEmails: (
     params: {
-      accountId?: number;
+      account_id?: number;
       view?: string;
       filter?: string;
       search?: string;
@@ -162,7 +162,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
         accounts.map(async (account) => {
           if (account.data.id) {
             const folders = await invoke<Folder[]>("get_folders", {
-              accountId: account.data.id,
+              account_id: account.data.id,
             });
             foldersMap[account.data.id] = folders;
           }
@@ -198,38 +198,6 @@ export const useEmailStore = create<EmailState>((set, get) => ({
 
     set({ loadingEmails: true, lastSearchParams: params });
 
-    // Background refresh
-    if (params.accountId) {
-      // Find inbox folder for this account
-      const folders = get().accountFolders[params.accountId];
-      const inbox = folders?.find(
-        (f) => f.role === "inbox" || f.name.toLowerCase() === "inbox",
-      );
-      if (inbox) {
-        invoke("refresh_folder", {
-          accountId: params.accountId,
-          folderId: inbox.id,
-        }).catch((err) => console.error("Background refresh failed:", err));
-      }
-    } else if (!params.view || params.view === "primary") {
-      // Unified Inbox: refresh all account inboxes
-      const { accounts, accountFolders } = get();
-      accounts.forEach((account) => {
-        if (account.data.id) {
-          const folders = accountFolders[account.data.id];
-          const inbox = folders?.find(
-            (f) => f.role === "inbox" || f.name.toLowerCase() === "inbox",
-          );
-          if (inbox) {
-            invoke("refresh_folder", {
-              accountId: account.data.id,
-              folderId: inbox.id,
-            }).catch((err) => console.error("Background refresh failed:", err));
-          }
-        }
-      });
-    }
-
     // If refreshing, we want to fetch at least as many as we already have
     // to avoid the list shrinking and causing scroll jumps
     const limit = isRefresh
@@ -246,7 +214,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       if (params.search) {
         fetchedEmails = await invoke<Email[]>("search_emails", {
           query_text: params.search,
-          account_id: params.accountId || null,
+          account_id: params.account_id || null,
           view: params.view || null,
           limit,
           offset: 0,
@@ -260,7 +228,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
           accounts.map(async (account) => {
             if (account.data.id) {
               const accountDrafts = await invoke<any[]>("get_drafts", {
-                accountId: account.data.id,
+                account_id: account.data.id,
               });
               drafts.push(...accountDrafts);
             }
@@ -285,7 +253,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
         }));
       } else {
         fetchedEmails = await invoke<Email[]>("get_emails", {
-          account_id: params.accountId || null,
+          account_id: params.account_id || null,
           view: params.view || "primary",
           filter: params.filter || null,
           limit,
@@ -340,13 +308,13 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       const newEmails = lastSearchParams.search
         ? await invoke<Email[]>("search_emails", {
             query_text: lastSearchParams.search,
-            account_id: lastSearchParams.accountId || null,
+            account_id: lastSearchParams.account_id || null,
             view: lastSearchParams.view || null,
             limit: PAGE_SIZE,
             offset: emails.length,
           })
         : await invoke<Email[]>("get_emails", {
-            account_id: lastSearchParams.accountId || null,
+            account_id: lastSearchParams.account_id || null,
             view: lastSearchParams.view || "primary",
             filter: lastSearchParams.filter || null,
             limit: PAGE_SIZE,
