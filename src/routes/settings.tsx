@@ -20,9 +20,13 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Trash2, Plus, ArrowLeft } from "lucide-react";
+import { Trash2, Plus, ArrowLeft, Bot, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { useState } from "react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/settings")({
   validateSearch: (search: Record<string, unknown>) => {
@@ -38,6 +42,9 @@ function SettingsPage() {
   const navigate = useNavigate();
   const { accounts, fetchAccountsAndFolders } = useEmailStore();
   const { settings, updateSetting } = useSettingsStore();
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [availableModels, setAvailableModels] = useState<{ id: string }[]>([]);
 
   const handleRemoveAccount = async (index: number) => {
     try {
@@ -45,6 +52,23 @@ function SettingsPage() {
       await fetchAccountsAndFolders();
     } catch (error) {
       console.error("Failed to remove account:", error);
+    }
+  };
+
+  const handleFetchModels = async () => {
+    setFetchingModels(true);
+    try {
+      const models = await invoke<{ id: string }[]>("get_available_models", {
+        baseUrl: settings.aiBaseUrl,
+        apiKey: settings.aiApiKey,
+      });
+      setAvailableModels(models);
+      toast.success(`Successfully fetched ${models.length} models`);
+    } catch (error) {
+      console.error("Failed to fetch models:", error);
+      toast.error(typeof error === "string" ? error : "Failed to fetch models");
+    } finally {
+      setFetchingModels(false);
     }
   };
 
@@ -69,10 +93,11 @@ function SettingsPage() {
           }
           className="max-w-4xl mx-auto"
         >
-          <TabsList className="grid w-full grid-cols-3 mb-8">
+          <TabsList className="grid w-full grid-cols-4 mb-8">
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="accounts">Accounts</TabsTrigger>
+            <TabsTrigger value="ai">AI</TabsTrigger>
           </TabsList>
 
           <TabsContent value="general" className="space-y-6">
@@ -290,6 +315,137 @@ function SettingsPage() {
                 </Card>
               ))}
             </div>
+          </TabsContent>
+
+          <TabsContent value="ai" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="flex items-center gap-2">
+                      <Bot className="h-5 w-5" /> AI Configuration
+                    </CardTitle>
+                    <CardDescription>
+                      Configure your AI provider and model for email enrichment and smart features.
+                    </CardDescription>
+                  </div>
+                  <Switch
+                    checked={settings.aiEnabled}
+                    onCheckedChange={(v) => updateSetting("aiEnabled", v)}
+                  />
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="base-url">Base URL</Label>
+                    <Input
+                      id="base-url"
+                      placeholder="https://api.openai.com/v1"
+                      value={settings.aiBaseUrl}
+                      onChange={(e) => updateSetting("aiBaseUrl", e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The API endpoint for your AI provider (e.g., OpenAI, Anthropic, or local Ollama).
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="api-key">API Key</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          id="api-key"
+                          type={showApiKey ? "text" : "password"}
+                          placeholder="sk-..."
+                          value={settings.aiApiKey}
+                          onChange={(e) => updateSetting("aiApiKey", e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <Label>Model</Label>
+                    <div className="flex gap-2">
+                      <Select
+                        value={settings.aiModel}
+                        onValueChange={(v) => updateSetting("aiModel", v)}
+                        disabled={!settings.aiBaseUrl}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder="Select a model" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableModels.length > 0 ? (
+                            availableModels.map((model) => (
+                              <SelectItem key={model.id} value={model.id}>
+                                {model.id}
+                              </SelectItem>
+                            ))
+                          ) : settings.aiModel ? (
+                            <SelectItem value={settings.aiModel}>{settings.aiModel}</SelectItem>
+                          ) : (
+                            <div className="p-2 text-sm text-center text-muted-foreground">
+                              No models loaded. Click fetch to see available models.
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <Button 
+                        variant="outline" 
+                        size="icon" 
+                        onClick={handleFetchModels}
+                        disabled={fetchingModels || !settings.aiBaseUrl}
+                      >
+                        <RefreshCw className={`h-4 w-4 ${fetchingModels ? "animate-spin" : ""}`} />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {settings.aiEnabled && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>AI Features</CardTitle>
+                  <CardDescription>
+                    Select which AI-powered features you want to enable.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Email Summarization</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically summarize long email threads.
+                      </p>
+                    </div>
+                    <Switch defaultChecked disabled />
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Smart Replies</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Generate context-aware reply suggestions.
+                      </p>
+                    </div>
+                    <Switch disabled />
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>

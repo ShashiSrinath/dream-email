@@ -16,6 +16,10 @@ export interface Settings {
   density: Density;
   fontSize: number;
   fontFamily: string;
+  aiEnabled: boolean;
+  aiBaseUrl: string;
+  aiApiKey: string;
+  aiModel: string;
 }
 
 interface SettingsState {
@@ -35,6 +39,10 @@ const defaultSettings: Settings = {
   density: "comfortable",
   fontSize: 14,
   fontFamily: "Inter",
+  aiEnabled: false,
+  aiBaseUrl: "https://api.openai.com/v1",
+  aiApiKey: "",
+  aiModel: "",
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({

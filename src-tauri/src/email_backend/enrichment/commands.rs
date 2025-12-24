@@ -192,6 +192,71 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         }
     }
 
+    // 3. AI Enrichment (optional and sparing)
+    let ai_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiEnabled'")
+        .fetch_one(&*pool)
+        .await
+        .unwrap_or(("false".to_string(),));
+    
+    let mut job_title = None;
+    let mut ai_last_enriched_at = None;
+
+    // Check if we already have AI data to avoid redundant calls
+    let existing_ai_data: Option<(Option<String>, Option<chrono::DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT job_title, ai_last_enriched_at FROM senders WHERE address = ?"
+    )
+    .bind(&address)
+    .fetch_optional(&*pool)
+    .await
+    .unwrap_or(None);
+
+    if ai_enabled.0 == "true" {
+        let (existing_job, last_ai_run) = existing_ai_data.unwrap_or((None, None));
+        
+        // Sparsity logic:
+        // Run AI enrichment ONLY if:
+        // 1. We have no job title yet
+        // 2. OR the last AI run was more than 90 days ago (LLM data changes slowly)
+        let needs_ai = existing_job.is_none() || match last_ai_run {
+            Some(last) => (Utc::now() - last).num_days() > 90,
+            None => true,
+        };
+
+        if needs_ai {
+            // Fetch last 5 email snippets for this sender
+            let snippets: Vec<String> = sqlx::query_scalar(
+                "SELECT snippet FROM emails WHERE sender_address = ? AND snippet IS NOT NULL ORDER BY date DESC LIMIT 5"
+            )
+            .bind(&address)
+            .fetch_all(&*pool)
+            .await
+            .unwrap_or_default();
+
+            if !snippets.is_empty() {
+                log::info!("Sparingly triggering AI enrichment for {}", address);
+                if let Ok(ai_data) = crate::email_backend::llm::enrichment::enrich_sender_with_ai(app_handle, &address, snippets).await {
+                    if let Some(jt) = ai_data["job_title"].as_str() {
+                        job_title = Some(jt.to_string());
+                    }
+                    if let Some(c) = ai_data["company"].as_str() {
+                        if company.is_none() {
+                            company = Some(c.to_string());
+                        }
+                    }
+                    if let Some(b) = ai_data["bio"].as_str() {
+                        if bio.is_none() {
+                            bio = Some(b.to_string());
+                        }
+                    }
+                    ai_last_enriched_at = Some(Utc::now());
+                }
+            }
+        } else {
+            job_title = existing_job;
+            ai_last_enriched_at = last_ai_run;
+        }
+    }
+
     let now = Utc::now();
     let is_verified = github_handle.is_some() || twitter_handle.is_some() || linkedin_handle.is_some();
     
@@ -199,7 +264,7 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         address: address.clone(),
         name,
         avatar_url,
-        job_title: None,
+        job_title,
         company,
         bio,
         location,
@@ -208,6 +273,7 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         twitter_handle,
         website_url,
         is_verified,
+        ai_last_enriched_at,
         last_enriched_at: Some(now),
         created_at: Some(now),
         updated_at: Some(now),
@@ -215,28 +281,31 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
 
     sqlx::query(
         "INSERT INTO senders (
-            address, name, avatar_url, company, bio, location, 
+            address, name, avatar_url, job_title, company, bio, location, 
             github_handle, twitter_handle, linkedin_handle, website_url, 
-            is_verified, last_enriched_at
+            is_verified, ai_last_enriched_at, last_enriched_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(address) DO UPDATE SET
             name = COALESCE(excluded.name, senders.name),
             avatar_url = excluded.avatar_url,
+            job_title = COALESCE(excluded.job_title, senders.job_title),
             company = COALESCE(excluded.company, senders.company),
-            bio = excluded.bio,
+            bio = COALESCE(excluded.bio, senders.bio),
             location = excluded.location,
             github_handle = excluded.github_handle,
             twitter_handle = excluded.twitter_handle,
             linkedin_handle = excluded.linkedin_handle,
             website_url = excluded.website_url,
             is_verified = excluded.is_verified,
+            ai_last_enriched_at = COALESCE(excluded.ai_last_enriched_at, senders.ai_last_enriched_at),
             last_enriched_at = excluded.last_enriched_at,
             updated_at = CURRENT_TIMESTAMP"
     )
     .bind(&sender.address)
     .bind(&sender.name)
     .bind(&sender.avatar_url)
+    .bind(&sender.job_title)
     .bind(&sender.company)
     .bind(&sender.bio)
     .bind(&sender.location)
@@ -245,6 +314,7 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     .bind(&sender.linkedin_handle)
     .bind(&sender.website_url)
     .bind(sender.is_verified)
+    .bind(sender.ai_last_enriched_at)
     .bind(sender.last_enriched_at)
     .execute(&*pool)
     .await

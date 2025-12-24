@@ -89,7 +89,6 @@ Act as a desktop email client with **multiple inboxes in the same view** (Unifie
 - [ ] **Privacy-First Architecture**:
   - [ ] **Opt-in Discovery**: Allow users to toggle external identity lookups to maintain privacy.
   - [ ] **Local-First Cache**: Strictly cache all enriched data in SQLite; ensure no data is sent to 3rd party servers except for the direct resolution request.
-  - [ ] **Request Proxying**: All external metadata fetches (favicons, BIMI, etc.) routed through a local Rust proxy to strip tracking headers.
 
 ---
 
