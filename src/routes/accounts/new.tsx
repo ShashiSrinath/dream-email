@@ -9,7 +9,7 @@ import { ChevronLeft, Info, Lock, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
-export const Route = createFileRoute("/accounts/new-account")({
+export const Route = createFileRoute("/accounts/new")({
   component: RouteComponent,
 });
 

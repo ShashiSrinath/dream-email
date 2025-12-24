@@ -14,7 +14,7 @@ import {
   SidebarMenuSubItem
 } from "@/components/ui/sidebar";
 import { CircleAlert, Inbox, Mail, Plus, Settings, Star } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import { Gmail } from "@/components/ui/svgs/gmail";
 import { useEmailStore } from "@/lib/store";
@@ -22,12 +22,7 @@ import { useEmailStore } from "@/lib/store";
 export function AppSidebar() {
   const accounts = useEmailStore(state => state.accounts)
   const accountFolders = useEmailStore(state => state.accountFolders)
-  const init = useEmailStore(state => state.init)
   const search = useSearch({ from: '/_inbox' })
-
-  useEffect(() => {
-    return init();
-  }, [init])
 
   const totalUnread = useMemo(() => {
     return Object.values(accountFolders).flat().reduce((acc, folder) => acc + folder.unread_count, 0)
@@ -130,7 +125,7 @@ export function AppSidebar() {
               ))}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <Link to="/accounts/new-account">
+                  <Link to="/accounts/new">
                     <Plus className="w-4 h-4" />
                     <span>Add Account</span>
                   </Link>

@@ -53,7 +53,7 @@ mock.module("@tauri-apps/api/event", () => ({
 }));
 
 // Global TanStack Router Mock
-export const mockNavigate = mock(() => {});
+export const mockNavigate = mock((..._args: any[]) => {});
 mock.module("@tanstack/react-router", () => ({
   useSearch: mock(() => ({})),
   useNavigate: mock(() => mockNavigate),

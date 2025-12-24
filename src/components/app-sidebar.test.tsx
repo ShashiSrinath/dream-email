@@ -1,9 +1,10 @@
 import "../test/setup";
 import { describe, it, expect, beforeEach } from "bun:test";
-import { render, within, waitFor } from "@testing-library/react";
+import { render, within, waitFor, act } from "@testing-library/react";
 import { AppSidebar } from "./app-sidebar";
 import { mockInvoke } from "../test/setup";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { useEmailStore } from "@/lib/store";
 
 const mockAccounts = [
   {
@@ -37,6 +38,10 @@ describe("AppSidebar", () => {
   });
 
   it("renders accounts and folders", async () => {
+    await act(async () => {
+      await useEmailStore.getState().fetchAccountsAndFolders();
+    });
+
     render(
       <SidebarProvider>
         <AppSidebar />
