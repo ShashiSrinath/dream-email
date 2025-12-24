@@ -50,6 +50,11 @@ export type Attachment = {
 };
 
 interface EmailState {
+  // Initialization
+  isInitialized: boolean;
+  init: () => () => void;
+  reset: () => void;
+
   // Accounts & Folders
   accounts: Account[];
   accountFolders: Record<number, Folder[]>;
@@ -76,13 +81,10 @@ interface EmailState {
 
   // Actions
   markAsRead: (ids: number[]) => Promise<void>;
-  
-  // Initialization
-  init: () => () => void;
-  reset: () => void;
 }
 
-const initialState: Pick<EmailState, 'accounts' | 'accountFolders' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds'> = {
+const initialState: Pick<EmailState, 'isInitialized' | 'accounts' | 'accountFolders' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds'> = {
+  isInitialized: false,
   accounts: [],
   accountFolders: {},
   emails: [],
@@ -279,7 +281,9 @@ export const useEmailStore = create<EmailState>((set, get) => ({
   },
 
   init: () => {
-    get().fetchAccountsAndFolders();
+    get().fetchAccountsAndFolders().then(() => {
+      set({ isInitialized: true });
+    });
     
     const unlistenPromise = listen("emails-updated", () => {
       get().fetchAccountsAndFolders();

@@ -40,6 +40,7 @@ describe("AppSidebar", () => {
   it("renders accounts and folders", async () => {
     await act(async () => {
       await useEmailStore.getState().fetchAccountsAndFolders();
+      useEmailStore.setState({ isInitialized: true });
     });
 
     render(
