@@ -57,7 +57,7 @@ function EmailDetail() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
       <div className="p-6 border-b space-y-4">
         <h2 className="text-2xl font-bold">{email.subject || "(No Subject)"}</h2>
         <div className="flex items-center gap-4">
@@ -81,8 +81,8 @@ function EmailDetail() {
         </div>
       </div>
 
-      <ScrollArea className="flex-1 p-8">
-        <div className="max-w-4xl mx-auto space-y-8">
+      <ScrollArea className="flex-1 min-h-0 bg-email-view">
+        <div className="max-w-4xl mx-auto my-8 p-8 bg-background rounded-xl shadow-sm border space-y-8">
           <Suspense fallback={
             <div className="space-y-4">
               <Skeleton className="h-4 w-3/4" />

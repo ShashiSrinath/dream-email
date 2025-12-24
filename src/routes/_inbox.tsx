@@ -45,7 +45,7 @@ export function InboxLayout() {
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Email List */}
-      <div className="w-1/3 border-r flex flex-col bg-muted/10">
+      <div className="w-1/3 border-r flex flex-col bg-muted/10 min-h-0">
         <EmailListToolbar
           isAllSelected={isAllSelected}
           isSomeSelected={isSomeSelected}
@@ -76,7 +76,7 @@ export function InboxLayout() {
       </div>
 
       {/* Email Content */}
-      <div className="flex-1 flex flex-col bg-background">
+      <div className="flex-1 flex flex-col bg-background min-h-0">
         <Outlet />
       </div>
     </div>

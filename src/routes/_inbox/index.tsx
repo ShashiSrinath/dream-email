@@ -7,7 +7,7 @@ export const Route = createFileRoute("/_inbox/")({
 
 function InboxIndex() {
   return (
-    <div className="flex-1 flex items-center justify-center text-muted-foreground">
+    <div className="flex-1 flex items-center justify-center text-muted-foreground bg-email-view">
       <div className="text-center">
         <Mail className="w-16 h-16 mx-auto mb-4 opacity-10" />
         <p>Select an email to read</p>
