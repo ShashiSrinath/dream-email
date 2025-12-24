@@ -46,11 +46,12 @@ Act as a desktop email client with **multiple inboxes in the same view** (Unifie
 - [x] **Rich Text Editor**: A modern editor with support for formatting, signatures, and attachments.
 - [x] **Drafts Management**: Local autosave and cross-provider draft syncing.
 
-## Phase 5: Search & Performance
+## Phase 5: Search & Performance (Complete)
 
-- [ ] **Full-Text Search**: Leverage SQLite FTS5 for lightning-fast searching across all inboxes.
-- [ ] **Asset Optimization**: Lazy loading for images and attachments.
-- [ ] **Deep System Integration**: Native notifications, keyboard shortcuts, and tray icons.
+- [x] **Full-Text Search**: Leverage SQLite FTS5 for lightning-fast searching across all inboxes.
+- [x] **Asset Optimization**: Lazy loading for images and attachments.
+- [x] **Deep System Integration**: Native notifications, keyboard shortcuts, and tray icons.
+- [x] **Bug Fixes**: Resolved SQLite syntax error in unified counts and improved IMAP error handling.
 
 ---
 

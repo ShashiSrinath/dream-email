@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -73,8 +73,21 @@ interface EmailState {
   emails: Email[];
   loadingEmails: boolean;
   hasMore: boolean;
-  lastSearchParams: { accountId?: number; view?: string; filter?: string; search?: string } | null;
-  fetchEmails: (params: { accountId?: number; view?: string; filter?: string; search?: string }, isRefresh?: boolean) => Promise<void>;
+  lastSearchParams: {
+    accountId?: number;
+    view?: string;
+    filter?: string;
+    search?: string;
+  } | null;
+  fetchEmails: (
+    params: {
+      accountId?: number;
+      view?: string;
+      filter?: string;
+      search?: string;
+    },
+    isRefresh?: boolean,
+  ) => Promise<void>;
   fetchMoreEmails: () => Promise<void>;
   refreshEmails: () => Promise<void>;
 
@@ -90,6 +103,7 @@ interface EmailState {
 
   // Actions
   markAsRead: (ids: number[]) => Promise<void>;
+  moveToTrash: (ids: number[]) => Promise<void>;
 
   // Composer
   composer: {
@@ -99,10 +113,23 @@ interface EmailState {
     defaultSubject?: string;
     defaultBody?: string;
   };
-  setComposer: (state: Partial<EmailState['composer']>) => void;
+  setComposer: (state: Partial<EmailState["composer"]>) => void;
 }
 
-const initialState: Pick<EmailState, 'isInitialized' | 'accounts' | 'accountFolders' | 'unifiedCounts' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds' | 'composer'> = {
+const initialState: Pick<
+  EmailState,
+  | "isInitialized"
+  | "accounts"
+  | "accountFolders"
+  | "unifiedCounts"
+  | "emails"
+  | "loadingEmails"
+  | "hasMore"
+  | "lastSearchParams"
+  | "selectedEmailId"
+  | "selectedIds"
+  | "composer"
+> = {
   isInitialized: false,
   accounts: [],
   accountFolders: {},
@@ -127,17 +154,21 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     try {
       const accounts = (await invoke<Account[]>("get_accounts")) || [];
       set({ accounts });
-      
+
       const foldersMap: Record<number, Folder[]> = {};
-      
+
       // Parallelize folder fetching for all accounts
-      await Promise.all(accounts.map(async (account) => {
-        if (account.data.id) {
-          const folders = await invoke<Folder[]>("get_folders", { accountId: account.data.id });
-          foldersMap[account.data.id] = folders;
-        }
-      }));
-      
+      await Promise.all(
+        accounts.map(async (account) => {
+          if (account.data.id) {
+            const folders = await invoke<Folder[]>("get_folders", {
+              accountId: account.data.id,
+            });
+            foldersMap[account.data.id] = folders;
+          }
+        }),
+      );
+
       set({ accountFolders: foldersMap });
       get().fetchUnifiedCounts();
     } catch (error) {
@@ -147,8 +178,15 @@ export const useEmailStore = create<EmailState>((set, get) => ({
 
   fetchUnifiedCounts: async () => {
     try {
-      const counts = await invoke<UnifiedCounts>("get_unified_counts");
-      set({ unifiedCounts: counts });
+      const counts = await invoke<any>("get_unified_counts");
+      set({
+        unifiedCounts: {
+          primary: counts.primary_count || 0,
+          others: counts.others || 0,
+          spam: counts.spam || 0,
+          drafts: counts.drafts || 0,
+        },
+      });
     } catch (error) {
       console.error("Failed to fetch unified counts:", error);
     }
@@ -164,34 +202,44 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     if (params.accountId) {
       // Find inbox folder for this account
       const folders = get().accountFolders[params.accountId];
-      const inbox = folders?.find(f => f.role === 'inbox' || f.name.toLowerCase() === 'inbox');
+      const inbox = folders?.find(
+        (f) => f.role === "inbox" || f.name.toLowerCase() === "inbox",
+      );
       if (inbox) {
-        invoke("refresh_folder", { accountId: params.accountId, folderId: inbox.id })
-          .catch(err => console.error("Background refresh failed:", err));
+        invoke("refresh_folder", {
+          accountId: params.accountId,
+          folderId: inbox.id,
+        }).catch((err) => console.error("Background refresh failed:", err));
       }
     } else if (!params.view || params.view === "primary") {
       // Unified Inbox: refresh all account inboxes
       const { accounts, accountFolders } = get();
-      accounts.forEach(account => {
+      accounts.forEach((account) => {
         if (account.data.id) {
           const folders = accountFolders[account.data.id];
-          const inbox = folders?.find(f => f.role === 'inbox' || f.name.toLowerCase() === 'inbox');
+          const inbox = folders?.find(
+            (f) => f.role === "inbox" || f.name.toLowerCase() === "inbox",
+          );
           if (inbox) {
-            invoke("refresh_folder", { accountId: account.data.id, folderId: inbox.id })
-              .catch(err => console.error("Background refresh failed:", err));
+            invoke("refresh_folder", {
+              accountId: account.data.id,
+              folderId: inbox.id,
+            }).catch((err) => console.error("Background refresh failed:", err));
           }
         }
       });
     }
-    
-    // If refreshing, we want to fetch at least as many as we already have 
+
+    // If refreshing, we want to fetch at least as many as we already have
     // to avoid the list shrinking and causing scroll jumps
-    const limit = isRefresh ? Math.max(currentEmails.length, PAGE_SIZE) : PAGE_SIZE;
-    
+    const limit = isRefresh
+      ? Math.max(currentEmails.length, PAGE_SIZE)
+      : PAGE_SIZE;
+
     if (!isRefresh) {
       set({ emails: [], hasMore: true, selectedIds: new Set() });
     }
-    
+
     try {
       let fetchedEmails: Email[] = [];
 
@@ -201,58 +249,67 @@ export const useEmailStore = create<EmailState>((set, get) => ({
           account_id: params.accountId || null,
           view: params.view || null,
           limit,
-          offset: 0
+          offset: 0,
         });
       } else if (params.view === "drafts") {
         // Fetch from drafts table and map to Email type
         const accounts = get().accounts;
         const drafts: any[] = [];
-        
-        await Promise.all(accounts.map(async (account) => {
-            if (account.data.id) {
-                const accountDrafts = await invoke<any[]>("get_drafts", { accountId: account.data.id });
-                drafts.push(...accountDrafts);
-            }
-        }));
 
-        fetchedEmails = drafts.map(d => ({
-            id: d.id, // Note: This might conflict with email IDs, but for now it's okay if we are only showing drafts
-            account_id: d.account_id,
-            folder_id: -1, // Special ID for drafts
-            remote_id: `draft-${d.id}`,
-            message_id: null,
-            subject: d.subject || "(No Subject)",
-            sender_name: "Draft",
-            sender_address: d.to_address || "(No Recipient)",
-            date: d.updated_at,
-            flags: JSON.stringify(["draft"]),
-            snippet: d.body_html ? d.body_html.replace(/<[^>]*>/g, '').substring(0, 100) : null,
-            has_attachments: false
+        await Promise.all(
+          accounts.map(async (account) => {
+            if (account.data.id) {
+              const accountDrafts = await invoke<any[]>("get_drafts", {
+                accountId: account.data.id,
+              });
+              drafts.push(...accountDrafts);
+            }
+          }),
+        );
+
+        fetchedEmails = drafts.map((d) => ({
+          id: d.id, // Note: This might conflict with email IDs, but for now it's okay if we are only showing drafts
+          account_id: d.account_id,
+          folder_id: -1, // Special ID for drafts
+          remote_id: `draft-${d.id}`,
+          message_id: null,
+          subject: d.subject || "(No Subject)",
+          sender_name: "Draft",
+          sender_address: d.to_address || "(No Recipient)",
+          date: d.updated_at,
+          flags: JSON.stringify(["draft"]),
+          snippet: d.body_html
+            ? d.body_html.replace(/<[^>]*>/g, "").substring(0, 100)
+            : null,
+          has_attachments: false,
         }));
       } else {
-        fetchedEmails = await invoke<Email[]>("get_emails", { 
-          account_id: params.accountId || null, 
+        fetchedEmails = await invoke<Email[]>("get_emails", {
+          account_id: params.accountId || null,
           view: params.view || "primary",
           filter: params.filter || null,
           limit,
-          offset: 0
+          offset: 0,
         });
       }
-      
+
       if (isRefresh) {
         // Smart Merge
-        set(state => {
-          const emailMap = new Map(state.emails.map(e => [e.id, e]));
+        set((state) => {
+          const emailMap = new Map(state.emails.map((e) => [e.id, e]));
           let changed = false;
-          
-          const merged = fetchedEmails.map(newEmail => {
+
+          const merged = fetchedEmails.map((newEmail) => {
             const existing = emailMap.get(newEmail.id);
             if (existing) {
-              if (existing.flags !== newEmail.flags || existing.subject !== newEmail.subject) {
+              if (
+                existing.flags !== newEmail.flags ||
+                existing.subject !== newEmail.subject
+              ) {
                 changed = true;
                 return newEmail;
               }
-              return existing; 
+              return existing;
             }
             changed = true;
             return newEmail;
@@ -260,7 +317,9 @@ export const useEmailStore = create<EmailState>((set, get) => ({
 
           if (merged.length !== state.emails.length) changed = true;
 
-          return changed ? { emails: merged, hasMore: fetchedEmails.length === limit } : {};
+          return changed
+            ? { emails: merged, hasMore: fetchedEmails.length === limit }
+            : {};
         });
       } else {
         set({ emails: fetchedEmails, hasMore: fetchedEmails.length === limit });
@@ -278,28 +337,28 @@ export const useEmailStore = create<EmailState>((set, get) => ({
 
     set({ loadingEmails: true });
     try {
-      const newEmails = lastSearchParams.search 
+      const newEmails = lastSearchParams.search
         ? await invoke<Email[]>("search_emails", {
             query_text: lastSearchParams.search,
             account_id: lastSearchParams.accountId || null,
             view: lastSearchParams.view || null,
             limit: PAGE_SIZE,
-            offset: emails.length
+            offset: emails.length,
           })
         : await invoke<Email[]>("get_emails", {
             account_id: lastSearchParams.accountId || null,
             view: lastSearchParams.view || "primary",
             filter: lastSearchParams.filter || null,
             limit: PAGE_SIZE,
-            offset: emails.length
+            offset: emails.length,
           });
 
-      set(state => {
-        const existingIds = new Set(state.emails.map(e => e.id));
-        const uniqueNewEmails = newEmails.filter(e => !existingIds.has(e.id));
-        return { 
-          emails: [...state.emails, ...uniqueNewEmails], 
-          hasMore: newEmails.length === PAGE_SIZE 
+      set((state) => {
+        const existingIds = new Set(state.emails.map((e) => e.id));
+        const uniqueNewEmails = newEmails.filter((e) => !existingIds.has(e.id));
+        return {
+          emails: [...state.emails, ...uniqueNewEmails],
+          hasMore: newEmails.length === PAGE_SIZE,
         };
       });
     } catch (error) {
@@ -319,11 +378,11 @@ export const useEmailStore = create<EmailState>((set, get) => ({
   setSelectedEmailId: (id) => {
     const currentId = get().selectedEmailId;
     if (currentId === id) return;
-    
+
     set({ selectedEmailId: id });
-    
+
     if (id) {
-      const email = get().emails.find(e => e.id === id);
+      const email = get().emails.find((e) => e.id === id);
       if (email && !email.flags.includes("seen")) {
         get().markAsRead([id]);
       }
@@ -353,12 +412,13 @@ export const useEmailStore = create<EmailState>((set, get) => ({
 
   clearSelection: () => set({ selectedIds: new Set() }),
 
-  setComposer: (state) => set((s) => ({ composer: { ...s.composer, ...state } })),
+  setComposer: (state) =>
+    set((s) => ({ composer: { ...s.composer, ...state } })),
 
   markAsRead: async (ids) => {
     // 1. Optimistic Update
-    set(state => ({
-      emails: state.emails.map(email => {
+    set((state) => ({
+      emails: state.emails.map((email) => {
         if (ids.includes(email.id) && !email.flags.includes("seen")) {
           // Parse and update flags
           try {
@@ -372,12 +432,12 @@ export const useEmailStore = create<EmailState>((set, get) => ({
           }
         }
         return email;
-      })
+      }),
     }));
 
     try {
       await invoke("mark_as_read", { emailIds: ids });
-      // We don't need to refresh the whole list immediately here 
+      // We don't need to refresh the whole list immediately here
       // since the event listener will handle consistency eventually
       // but the UI is already updated.
     } catch (error) {
@@ -386,20 +446,54 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     }
   },
 
+  moveToTrash: async (ids) => {
+    // 1. Optimistic Update: remove from current list
+    const currentEmails = get().emails;
+    const currentSelectedIds = get().selectedIds;
+    const currentSelectedEmailId = get().selectedEmailId;
+
+    set((state) => ({
+      emails: state.emails.filter((email) => !ids.includes(email.id)),
+      selectedIds: new Set(
+        Array.from(state.selectedIds).filter((id) => !ids.includes(id)),
+      ),
+      selectedEmailId:
+        state.selectedEmailId && ids.includes(state.selectedEmailId)
+          ? null
+          : state.selectedEmailId,
+    }));
+
+    try {
+      await invoke("move_to_trash", { emailIds: ids });
+      get().fetchUnifiedCounts();
+      get().fetchAccountsAndFolders();
+    } catch (error) {
+      console.error("Failed to move to trash:", error);
+      // Revert if it failed
+      set({
+        emails: currentEmails,
+        selectedIds: currentSelectedIds,
+        selectedEmailId: currentSelectedEmailId,
+      });
+    }
+  },
+
   init: () => {
-    get().fetchAccountsAndFolders().then(() => {
-      set({ isInitialized: true });
-    });
-    
+    get()
+      .fetchAccountsAndFolders()
+      .then(() => {
+        set({ isInitialized: true });
+      });
+
     const unlistenPromise = listen("emails-updated", () => {
       get().fetchAccountsAndFolders();
       get().refreshEmails();
     });
 
     return () => {
-      unlistenPromise.then(unlisten => unlisten());
+      unlistenPromise.then((unlisten) => unlisten());
     };
   },
 
-  reset: () => set(initialState)
+  reset: () => set(initialState),
 }));

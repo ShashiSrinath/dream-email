@@ -1,10 +1,16 @@
-import { createRootRoute, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
+import {
+  createRootRoute,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useEmailStore } from "@/lib/store";
 import { useEffect } from "react";
 import { Mail } from "lucide-react";
+import { Toaster } from "@/components/ui/sonner";
 import "../styles.css";
 
 const RootLayout = () => {
@@ -13,8 +19,9 @@ const RootLayout = () => {
   const accounts = useEmailStore((state) => state.accounts);
   const isInitialized = useEmailStore((state) => state.isInitialized);
   const init = useEmailStore((state) => state.init);
-  
-  const isAuthRoute = pathname === "/onboarding" || pathname === "/accounts/new";
+
+  const isAuthRoute =
+    pathname === "/onboarding" || pathname === "/accounts/new";
 
   useEffect(() => {
     return init();
@@ -39,9 +46,9 @@ const RootLayout = () => {
           <div className="space-y-2 text-center">
             <h1 className="text-2xl font-bold tracking-tight">Dream Email</h1>
             <div className="flex gap-1 justify-center">
-               <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-               <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-               <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"></span>
+              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"></span>
             </div>
           </div>
         </div>
@@ -53,6 +60,7 @@ const RootLayout = () => {
     return (
       <div className="min-h-screen bg-background">
         <Outlet />
+        <Toaster />
         <TanStackRouterDevtools />
       </div>
     );
@@ -64,6 +72,7 @@ const RootLayout = () => {
       <SidebarInset>
         <Outlet />
       </SidebarInset>
+      <Toaster />
       <TanStackRouterDevtools />
     </SidebarProvider>
   );

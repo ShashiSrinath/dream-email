@@ -24,6 +24,8 @@ pub struct SyncEngine<R: tauri::Runtime = tauri::Wry> {
 
 const SYNC_BATCH_SIZE: u32 = 500;
 
+use tauri_plugin_notification::NotificationExt;
+
 impl<R: tauri::Runtime> SyncEngine<R> {
     pub fn new(app_handle: tauri::AppHandle<R>) -> Self {
         Self { 
@@ -100,7 +102,15 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         let context = (*backend.context).clone();
         let mut client = context.client().await;
         
-        let folder_data = client.examine_mailbox(&folder_path).await.map_err(|e| e.to_string())?;
+        let folder_data = match client.examine_mailbox(&folder_path).await {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Failed to examine mailbox {}: {}", folder_path, e);
+                // If it's a "cannot examine" error, we might want to try to list folders again
+                // or just return the error. For now, let's return a more descriptive error.
+                return Err(format!("cannot examine IMAP mailbox {}: {}", folder_path, e));
+            }
+        };
         
         Self::sync_folder(app_handle, &mut *client, &account, &folder_path, folder_role, &folder_data).await?;
         
@@ -114,14 +124,15 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         account_id: i64,
         folder_id: i64,
         envelopes: Envelopes,
+        notify: bool,
     ) -> Result<(), String> {
         let pool = app_handle.state::<SqlitePool>();
         for env in envelopes {
             let flags: Vec<String> = env.flags.clone().into();
-            sqlx::query(
+            let res = sqlx::query(
                 "INSERT INTO emails (account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(folder_id, remote_id) DO UPDATE SET 
+                 ON CONFLICT(account_id, remote_id) DO UPDATE SET 
                     flags=excluded.flags"
             )
             .bind(account_id)
@@ -136,6 +147,14 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             .execute(&*pool)
             .await
             .map_err(|e: sqlx::Error| e.to_string())?;
+
+            if notify && res.rows_affected() > 0 && !flags.contains(&"seen".to_string()) {
+                let _ = app_handle.notification()
+                    .builder()
+                    .title(format!("New Email: {}", env.subject))
+                    .body(format!("From: {}", env.from.name.as_deref().unwrap_or(&env.from.addr)))
+                    .show();
+            }
         }
         Ok(())
     }
@@ -278,7 +297,8 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 let envelopes = client.fetch_envelopes_by_sequence(seq).await.map_err(|e| e.to_string())?;
                 if envelopes.is_empty() { break; }
                 
-                Self::save_envelopes(app_handle, account_id, folder_id, envelopes).await?;
+                let is_initial = stored_uid_next == 0;
+                Self::save_envelopes(app_handle, account_id, folder_id, envelopes, !is_initial).await?;
                 let _ = app_handle.emit("emails-updated", account_id);
                 
                 end = if start > 1 { start - 1 } else { 0 };
@@ -291,7 +311,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             let envelopes = client.fetch_envelopes(uids).await.map_err(|e| e.to_string())?;
             
             if !envelopes.is_empty() {
-                Self::save_envelopes(app_handle, account_id, folder_id, envelopes).await?;
+                Self::save_envelopes(app_handle, account_id, folder_id, envelopes, true).await?;
                 let _ = app_handle.emit("emails-updated", account_id);
             }
         } else {

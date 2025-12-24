@@ -83,63 +83,58 @@ pub async fn get_emails<R: tauri::Runtime>(
 ) -> Result<Vec<Email>, String> {
     let pool = app_handle.state::<SqlitePool>();
     
-    let mut query_parts = Vec::new();
-    let mut bindings = Vec::new();
+    let mut query_builder: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new(
+        "SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments 
+         FROM emails e 
+         JOIN folders f ON e.folder_id = f.id "
+    );
+
+    let mut has_where = false;
 
     if let Some(aid) = account_id {
-        query_parts.push("e.account_id = ?");
-        bindings.push(aid.to_string());
+        query_builder.push(" WHERE e.account_id = ");
+        query_builder.push_bind(aid);
+        has_where = true;
     }
 
     if let Some(v) = view {
+        if !has_where { query_builder.push(" WHERE "); has_where = true; } else { query_builder.push(" AND "); }
         match v.as_str() {
-            "primary" => query_parts.push("f.role = 'inbox'"),
-            "spam" => query_parts.push("f.role = 'spam'"),
-            "sent" => query_parts.push("f.role = 'sent'"),
-            "drafts" => query_parts.push("f.role = 'drafts'"),
-            "trash" => query_parts.push("f.role = 'trash'"),
-            "archive" => query_parts.push("f.role = 'archive'"),
-            "others" => query_parts.push("(f.role IS NULL OR f.role = '' OR f.role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive'))"),
-            _ => {}
-        }
+            "primary" => query_builder.push(" f.role = 'inbox'"),
+            "spam" => query_builder.push(" f.role = 'spam'"),
+            "sent" => query_builder.push(" f.role = 'sent'"),
+            "drafts" => query_builder.push(" f.role = 'drafts'"),
+            "trash" => query_builder.push(" f.role = 'trash'"),
+            "archive" => query_builder.push(" f.role = 'archive'"),
+            "others" => query_builder.push(" (f.role IS NULL OR f.role = '' OR f.role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive'))"),
+            _ => &mut query_builder,
+        };
     } else {
         // Default to primary if no view specified
-        query_parts.push("f.role = 'inbox'");
+        if !has_where { query_builder.push(" WHERE "); has_where = true; } else { query_builder.push(" AND "); }
+        query_builder.push(" f.role = 'inbox'");
     }
 
     if let Some(f) = filter {
+        if !has_where { query_builder.push(" WHERE "); } else { query_builder.push(" AND "); }
         match f.as_str() {
-            "unread" => query_parts.push("e.flags NOT LIKE '%seen%'"),
-            "flagged" => query_parts.push("e.flags LIKE '%flagged%'"),
-            _ => {}
-        }
+            "unread" => query_builder.push(" e.flags NOT LIKE '%seen%'"),
+            "flagged" => query_builder.push(" e.flags LIKE '%flagged%'"),
+            _ => &mut query_builder,
+        };
     }
 
-    let where_clause = if query_parts.is_empty() {
-        "".to_string()
-    } else {
-        format!("WHERE {}", query_parts.join(" AND "))
-    };
+    query_builder.push(" GROUP BY e.account_id, COALESCE(e.message_id, e.folder_id || '-' || e.remote_id)");
+    query_builder.push(" ORDER BY e.date DESC LIMIT ");
+    query_builder.push_bind(limit.unwrap_or(100) as i64);
+    query_builder.push(" OFFSET ");
+    query_builder.push_bind(offset.unwrap_or(0) as i64);
 
-    let l = limit.unwrap_or(100);
-    let o = offset.unwrap_or(0);
-    
-    let group_by = "GROUP BY e.account_id, COALESCE(e.message_id, e.folder_id || '-' || e.remote_id)";
-
-    let query_str = format!(
-        "SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments 
-         FROM emails e 
-         JOIN folders f ON e.folder_id = f.id 
-         {} {} ORDER BY e.date DESC LIMIT {} OFFSET {}", 
-        where_clause, group_by, l, o
-    );
-    
-    let mut query = sqlx::query_as::<_, Email>(&query_str);
-    for binding in bindings {
-        query = query.bind(binding.parse::<i64>().unwrap());
-    }
-
-    let emails = query.fetch_all(&*pool).await.map_err(|e| e.to_string())?;
+    let emails = query_builder
+        .build_query_as::<Email>()
+        .fetch_all(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(emails)
 }
@@ -150,7 +145,7 @@ pub async fn get_unified_counts<R: tauri::Runtime>(app_handle: tauri::AppHandle<
     
     let row: (i32, i32, i32, i32) = sqlx::query_as(
         "SELECT 
-            SUM(CASE WHEN role = 'inbox' THEN unread_count ELSE 0 END) as primary,
+            SUM(CASE WHEN role = 'inbox' THEN unread_count ELSE 0 END) as primary_count,
             SUM(CASE WHEN (role IS NULL OR role = '' OR role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive')) THEN unread_count ELSE 0 END) as others,
             SUM(CASE WHEN role = 'spam' THEN unread_count ELSE 0 END) as spam,
             SUM(CASE WHEN role = 'drafts' THEN total_count ELSE 0 END) as drafts
@@ -391,6 +386,100 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
     Ok(())
 }
 
+#[tauri::command]
+pub async fn move_to_trash<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_ids: Vec<i64>) -> Result<(), String> {
+    let pool = app_handle.state::<SqlitePool>();
+    let manager = AccountManager::new(&app_handle).await?;
+
+    for email_id in email_ids {
+        let email_info: Option<(i64, String, i64, String)> = sqlx::query_as(
+            "SELECT e.account_id, e.remote_id, e.folder_id, f.path FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
+        )
+        .bind(email_id)
+        .fetch_optional(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let (account_id, remote_id, source_folder_id, source_folder_path) = match email_info {
+            Some(info) => info,
+            None => continue,
+        };
+
+        // Find trash folder for this account
+        let trash_folder_info: Option<(i64, String)> = sqlx::query_as(
+            "SELECT id, path FROM folders WHERE account_id = ? AND role = 'trash'"
+        )
+        .bind(account_id)
+        .fetch_optional(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let (trash_folder_id, trash_folder_path) = match trash_folder_info {
+            Some(info) => info,
+            None => return Err(format!("Trash folder not found for account {}", account_id)),
+        };
+        
+        if source_folder_id == trash_folder_id {
+            // Already in trash, maybe we should permanently delete?
+            // For now, let's just skip.
+            continue;
+        }
+
+        // Perform move on server
+        if let Ok(account) = manager.get_account_by_id(account_id).await {
+            if let Ok((account_config, imap_config, _)) = account.get_configs() {
+                let backend_builder = BackendBuilder::new(
+                    account_config.clone(),
+                    ImapContextBuilder::new(account_config, imap_config),
+                );
+
+                if let Ok(backend) = backend_builder.build().await {
+                    let id = email::envelope::Id::single(remote_id);
+                    use email::message::r#move::MoveMessages;
+                    let _ = backend.move_messages(&source_folder_path, &trash_folder_path, &id).await.map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        // Update local DB
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+        // Check if seen to update counts
+        let is_unread: bool = sqlx::query_scalar("SELECT flags NOT LIKE '%seen%' FROM emails WHERE id = ?")
+            .bind(email_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        sqlx::query("UPDATE emails SET folder_id = ? WHERE id = ?")
+            .bind(trash_folder_id)
+            .bind(email_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Update counts
+        sqlx::query("UPDATE folders SET total_count = MAX(0, total_count - 1), unread_count = MAX(0, unread_count - ?) WHERE id = ?")
+            .bind(if is_unread { 1 } else { 0 })
+            .bind(source_folder_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        sqlx::query("UPDATE folders SET total_count = total_count + 1, unread_count = unread_count + ? WHERE id = ?")
+            .bind(if is_unread { 1 } else { 0 })
+            .bind(trash_folder_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+    }
+
+    let _ = app_handle.emit("emails-updated", ());
+    Ok(())
+}
+
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Attachment {
     pub id: i64,
@@ -464,55 +553,54 @@ pub async fn search_emails<R: tauri::Runtime>(
 ) -> Result<Vec<Email>, String> {
     let pool = app_handle.state::<SqlitePool>();
     
-    let mut query_parts = Vec::new();
-    let mut bindings = Vec::new();
+    if query_text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
 
-    // FTS search
-    query_parts.push("emails_fts MATCH ?");
-    bindings.push(query_text);
+    // FTS5 works better with a '*' for prefix matching if the user is typing
+    // We wrap the term in double quotes for phrase matching and add * for prefix matching
+    // Example: "query"*
+    let fts_query = format!("\"{}\"*", query_text.trim().replace("\"", "\"\""));
+
+    let mut query_builder: sqlx::QueryBuilder<sqlx::Sqlite> = sqlx::QueryBuilder::new(
+        "SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments 
+         FROM emails e 
+         JOIN folders f ON e.folder_id = f.id 
+         JOIN emails_fts fts ON e.id = fts.rowid 
+         WHERE emails_fts MATCH "
+    );
+    
+    query_builder.push_bind(fts_query);
 
     if let Some(aid) = account_id {
-        query_parts.push("e.account_id = ?");
-        bindings.push(aid.to_string());
+        query_builder.push(" AND e.account_id = ");
+        query_builder.push_bind(aid);
     }
 
     if let Some(v) = view {
         match v.as_str() {
-            "primary" => query_parts.push("f.role = 'inbox'"),
-            "spam" => query_parts.push("f.role = 'spam'"),
-            "sent" => query_parts.push("f.role = 'sent'"),
-            "drafts" => query_parts.push("f.role = 'drafts'"),
-            "trash" => query_parts.push("f.role = 'trash'"),
-            "archive" => query_parts.push("f.role = 'archive'"),
-            "others" => query_parts.push("(f.role IS NULL OR f.role = '' OR f.role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive'))"),
-            _ => {}
-        }
+            "primary" => query_builder.push(" AND f.role = 'inbox'"),
+            "spam" => query_builder.push(" AND f.role = 'spam'"),
+            "sent" => query_builder.push(" AND f.role = 'sent'"),
+            "drafts" => query_builder.push(" AND f.role = 'drafts'"),
+            "trash" => query_builder.push(" AND f.role = 'trash'"),
+            "archive" => query_builder.push(" AND f.role = 'archive'"),
+            "others" => query_builder.push(" AND (f.role IS NULL OR f.role = '' OR f.role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive'))"),
+            _ => &mut query_builder,
+        };
     }
 
-    let where_clause = format!("WHERE {}", query_parts.join(" AND "));
-    let l = limit.unwrap_or(100);
-    let o = offset.unwrap_or(0);
+    query_builder.push(" GROUP BY e.account_id, COALESCE(e.message_id, e.folder_id || '-' || e.remote_id)");
+    query_builder.push(" ORDER BY e.date DESC LIMIT ");
+    query_builder.push_bind(limit.unwrap_or(100) as i64);
+    query_builder.push(" OFFSET ");
+    query_builder.push_bind(offset.unwrap_or(0) as i64);
 
-    let query_str = format!(
-        "SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments 
-         FROM emails e 
-         JOIN folders f ON e.folder_id = f.id 
-         JOIN emails_fts fts ON e.id = fts.rowid
-         {} GROUP BY e.account_id, COALESCE(e.message_id, e.folder_id || '-' || e.remote_id)
-         ORDER BY e.date DESC LIMIT {} OFFSET {}", 
-        where_clause, l, o
-    );
-    
-    let mut query = sqlx::query_as::<_, Email>(&query_str);
-    for binding in bindings {
-        if binding.parse::<i64>().is_ok() && !binding.contains(|c: char| !c.is_numeric()) {
-             query = query.bind(binding.parse::<i64>().unwrap());
-        } else {
-             query = query.bind(binding);
-        }
-    }
-
-    let emails = query.fetch_all(&*pool).await.map_err(|e| e.to_string())?;
+    let emails = query_builder
+        .build_query_as::<Email>()
+        .fetch_all(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(emails)
 }

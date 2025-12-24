@@ -28,18 +28,20 @@ export function InboxLayout() {
   const { emailId } = useParams({ strict: false });
   const selectedEmailId = emailId ? parseInt(emailId) : null;
 
-  const emails = useEmailStore(state => state.emails);
-  const loadingEmails = useEmailStore(state => state.loadingEmails);
-  const hasMore = useEmailStore(state => state.hasMore);
-  const selectedIds = useEmailStore(state => state.selectedIds);
-  const fetchEmails = useEmailStore(state => state.fetchEmails);
-  const fetchMoreEmails = useEmailStore(state => state.fetchMoreEmails);
-  const toggleSelect = useEmailStore(state => state.toggleSelect);
-  const toggleSelectAll = useEmailStore(state => state.toggleSelectAll);
-  const markAsRead = useEmailStore(state => state.markAsRead);
+  const emails = useEmailStore((state) => state.emails);
+  const loadingEmails = useEmailStore((state) => state.loadingEmails);
+  const hasMore = useEmailStore((state) => state.hasMore);
+  const selectedIds = useEmailStore((state) => state.selectedIds);
+  const fetchEmails = useEmailStore((state) => state.fetchEmails);
+  const fetchMoreEmails = useEmailStore((state) => state.fetchMoreEmails);
+  const toggleSelect = useEmailStore((state) => state.toggleSelect);
+  const toggleSelectAll = useEmailStore((state) => state.toggleSelectAll);
+  const markAsRead = useEmailStore((state) => state.markAsRead);
+  const moveToTrash = useEmailStore((state) => state.moveToTrash);
 
   const isAllSelected = emails.length > 0 && selectedIds.size === emails.length;
-  const isSomeSelected = selectedIds.size > 0 && selectedIds.size < emails.length;
+  const isSomeSelected =
+    selectedIds.size > 0 && selectedIds.size < emails.length;
 
   useEffect(() => {
     fetchEmails({ accountId, view, filter, search });
@@ -93,7 +95,7 @@ export function InboxLayout() {
           <EmailListActions
             selectedCount={selectedIds.size}
             onArchive={() => console.log("Archive", Array.from(selectedIds))}
-            onDelete={() => console.log("Delete", Array.from(selectedIds))}
+            onDelete={() => moveToTrash(Array.from(selectedIds))}
             onMarkAsRead={() => markAsRead(Array.from(selectedIds))}
             onLabel={() => console.log("Label", Array.from(selectedIds))}
           />
@@ -117,4 +119,3 @@ export function InboxLayout() {
     </div>
   );
 }
-
