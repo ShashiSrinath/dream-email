@@ -117,7 +117,9 @@ pub async fn get_emails<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>, 
     account_id: Option<i64>, 
     folder_id: Option<i64>,
-    filter: Option<String>
+    filter: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>
 ) -> Result<Vec<Email>, String> {
     let pool = app_handle.state::<SqlitePool>();
     
@@ -149,7 +151,9 @@ pub async fn get_emails<R: tauri::Runtime>(
         format!("WHERE {}", query_parts.join(" AND "))
     };
 
-    let query_str = format!("{} {} ORDER BY date DESC LIMIT 100", base_query, where_clause);
+    let l = limit.unwrap_or(100);
+    let o = offset.unwrap_or(0);
+    let query_str = format!("{} {} ORDER BY date DESC LIMIT {} OFFSET {}", base_query, where_clause, l, o);
     
     let mut query = sqlx::query_as::<_, Email>(&query_str);
     for binding in bindings {

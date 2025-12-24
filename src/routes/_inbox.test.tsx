@@ -2,9 +2,9 @@ import "../test/setup";
 import { render, within, fireEvent, waitFor, act } from "@testing-library/react";
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { InboxLayout } from "./_inbox";
-import { mockInvoke, mockListen } from "../test/setup";
+import { mockInvoke, mockListen, mockNavigate } from "../test/setup";
 import { useEmailStore } from "@/lib/store";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 
 // Mock TanStack Virtual
 mock.module("@tanstack/react-virtual", () => ({
@@ -61,7 +61,7 @@ describe("InboxLayout", () => {
     });
     
     // Clear mocks for router hooks
-    (useNavigate as any).mockClear();
+    mockNavigate.mockClear();
     (useParams as any).mockClear();
     (useParams as any).mockReturnValue({});
   });
@@ -99,9 +99,6 @@ describe("InboxLayout", () => {
   });
 
   it("navigates to email when selected", async () => {
-    const mockNavigate = mock(() => {});
-    (useNavigate as any).mockReturnValue(mockNavigate);
-
     render(<InboxLayout />);
     const screen = within(document.body);
 

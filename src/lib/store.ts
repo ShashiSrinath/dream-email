@@ -58,8 +58,10 @@ interface EmailState {
   // Emails List
   emails: Email[];
   loadingEmails: boolean;
+  hasMore: boolean;
   lastSearchParams: { accountId?: number; folderId?: number; filter?: string } | null;
-  fetchEmails: (params: { accountId?: number; folderId?: number; filter?: string }) => Promise<void>;
+  fetchEmails: (params: { accountId?: number; folderId?: number; filter?: string }, isRefresh?: boolean) => Promise<void>;
+  fetchMoreEmails: () => Promise<void>;
   refreshEmails: () => Promise<void>;
 
   // Selected Email
@@ -80,15 +82,18 @@ interface EmailState {
   reset: () => void;
 }
 
-const initialState: Pick<EmailState, 'accounts' | 'accountFolders' | 'emails' | 'loadingEmails' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds'> = {
+const initialState: Pick<EmailState, 'accounts' | 'accountFolders' | 'emails' | 'loadingEmails' | 'hasMore' | 'lastSearchParams' | 'selectedEmailId' | 'selectedIds'> = {
   accounts: [],
   accountFolders: {},
   emails: [],
   loadingEmails: false,
+  hasMore: true,
   lastSearchParams: null,
   selectedEmailId: null,
   selectedIds: new Set<number>(),
 };
+
+const PAGE_SIZE = 50;
 
 export const useEmailStore = create<EmailState>((set, get) => ({
   ...initialState,
@@ -114,17 +119,48 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     }
   },
 
-  fetchEmails: async (params) => {
+  fetchEmails: async (params, isRefresh = false) => {
     set({ loadingEmails: true, lastSearchParams: params });
+    if (!isRefresh) {
+      set({ emails: [], hasMore: true, selectedIds: new Set() });
+    }
+    
     try {
       const emails = await invoke<Email[]>("get_emails", { 
-        accountId: params.accountId || null, 
-        folderId: params.folderId || null,
-        filter: params.filter || null
+        account_id: params.accountId || null, 
+        folder_id: params.folderId || null,
+        filter: params.filter || null,
+        limit: PAGE_SIZE,
+        offset: 0
       });
-      set({ emails, selectedIds: new Set() });
+      set({ emails, hasMore: emails.length === PAGE_SIZE });
     } catch (error) {
       console.error("Failed to fetch emails:", error);
+    } finally {
+      set({ loadingEmails: false });
+    }
+  },
+
+  fetchMoreEmails: async () => {
+    const { emails, loadingEmails, hasMore, lastSearchParams } = get();
+    if (loadingEmails || !hasMore || !lastSearchParams) return;
+
+    set({ loadingEmails: true });
+    try {
+      const newEmails = await invoke<Email[]>("get_emails", {
+        account_id: lastSearchParams.accountId || null,
+        folder_id: lastSearchParams.folderId || null,
+        filter: lastSearchParams.filter || null,
+        limit: PAGE_SIZE,
+        offset: emails.length
+      });
+
+      set({ 
+        emails: [...emails, ...newEmails], 
+        hasMore: newEmails.length === PAGE_SIZE 
+      });
+    } catch (error) {
+      console.error("Failed to fetch more emails:", error);
     } finally {
       set({ loadingEmails: false });
     }
@@ -133,13 +169,16 @@ export const useEmailStore = create<EmailState>((set, get) => ({
   refreshEmails: async () => {
     const { lastSearchParams, fetchEmails } = get();
     if (lastSearchParams) {
-      await fetchEmails(lastSearchParams);
+      await fetchEmails(lastSearchParams, true);
     }
   },
 
   setSelectedEmailId: (id) => {
-    if (get().selectedEmailId === id) return;
+    const currentId = get().selectedEmailId;
+    if (currentId === id) return;
+    
     set({ selectedEmailId: id });
+    
     if (id) {
       const email = get().emails.find(e => e.id === id);
       if (email && !email.flags.includes("seen")) {
@@ -172,11 +211,33 @@ export const useEmailStore = create<EmailState>((set, get) => ({
   clearSelection: () => set({ selectedIds: new Set() }),
 
   markAsRead: async (ids) => {
+    // 1. Optimistic Update
+    set(state => ({
+      emails: state.emails.map(email => {
+        if (ids.includes(email.id) && !email.flags.includes("seen")) {
+          // Parse and update flags
+          try {
+            const flags = JSON.parse(email.flags) as string[];
+            if (!flags.includes("seen")) {
+              flags.push("seen");
+            }
+            return { ...email, flags: JSON.stringify(flags) };
+          } catch {
+            return { ...email, flags: '["seen"]' };
+          }
+        }
+        return email;
+      })
+    }));
+
     try {
       await invoke("mark_as_read", { emailIds: ids });
-      // We don't manually update local state here because we listen for 'emails-updated'
+      // We don't need to refresh the whole list immediately here 
+      // since the event listener will handle consistency eventually
+      // but the UI is already updated.
     } catch (error) {
       console.error("Failed to mark as read:", error);
+      // Revert on error if needed, but for flags, a background sync usually fixes it
     }
   },
 
