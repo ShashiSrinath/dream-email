@@ -26,6 +26,7 @@ pub struct Email {
     pub subject: Option<String>,
     pub sender_name: Option<String>,
     pub sender_address: String,
+    pub recipient_to: Option<String>,
     pub date: String,
     pub flags: String,
     pub snippet: Option<String>,
@@ -98,19 +99,19 @@ pub async fn get_emails<R: tauri::Runtime>(
             FROM emails e
             JOIN folders f ON e.folder_id = f.id
          ),
-         latest_threads AS (
+          latest_threads AS (
             SELECT *,
             ROW_NUMBER() OVER (
-                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address, message_id) 
+                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address || '-' || COALESCE(recipient_to, ''), message_id) 
                 ORDER BY date DESC, id DESC
             ) as thread_rn,
             COUNT(*) OVER (
-                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address, message_id)
+                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address || '-' || COALESCE(recipient_to, ''), message_id)
             ) as t_count
             FROM unique_messages
             WHERE msg_rn = 1
          )
-         SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.thread_id, e.t_count as thread_count, e.in_reply_to, e.references_header, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments,
+         SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.thread_id, e.t_count as thread_count, e.in_reply_to, e.references_header, e.subject, e.sender_name, e.sender_address, e.recipient_to, e.date, e.flags, e.snippet, e.has_attachments,
          (e.subject LIKE 'Re:%' OR e.subject LIKE 're:%' OR e.in_reply_to IS NOT NULL) as is_reply,
          (e.subject LIKE 'Fwd:%' OR e.subject LIKE 'fwd:%' OR e.subject LIKE 'Fw:%' OR e.subject LIKE 'fw:%') as is_forward
          FROM latest_threads e 
@@ -185,10 +186,10 @@ pub async fn get_unified_counts<R: tauri::Runtime>(app_handle: tauri::AppHandle<
 }
 
 #[tauri::command]
-pub async fn get_email_by_id<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<Email, String> {
+    pub async fn get_email_by_id<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<Email, String> {
     let pool = app_handle.state::<SqlitePool>();
     let email = sqlx::query_as::<_, Email>(
-        "SELECT id, account_id, folder_id, remote_id, message_id, thread_id, 1 as thread_count, in_reply_to, references_header, subject, sender_name, sender_address, date, flags, snippet, has_attachments,
+        "SELECT id, account_id, folder_id, remote_id, message_id, thread_id, 1 as thread_count, in_reply_to, references_header, subject, sender_name, sender_address, recipient_to, date, flags, snippet, has_attachments,
          (subject LIKE 'Re:%' OR subject LIKE 're:%' OR in_reply_to IS NOT NULL) as is_reply,
          (subject LIKE 'Fwd:%' OR subject LIKE 'fwd:%' OR subject LIKE 'Fw:%' OR subject LIKE 'fw:%') as is_forward
          FROM emails WHERE id = ?"
@@ -210,15 +211,15 @@ pub async fn get_thread_emails<R: tauri::Runtime>(
     let pool = app_handle.state::<SqlitePool>();
     
     // 1. First get the reference email's details to find its group
-    let ref_email: (Option<String>, Option<String>, String, i64) = sqlx::query_as(
-        "SELECT thread_id, message_id, normalized_subject, account_id FROM emails WHERE id = ?"
+    let ref_email: (Option<String>, Option<String>, String, String, i64) = sqlx::query_as(
+        "SELECT thread_id, message_id, normalized_subject, sender_address, account_id FROM emails WHERE id = ?"
     )
     .bind(email_id)
     .fetch_one(&*pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    let (thread_id, message_id, norm_subject, account_id) = ref_email;
+    let (thread_id, message_id, norm_subject, sender_address, account_id) = ref_email;
     
     // 2. Build the query to find all emails in this \"group\"
     // We use a CTE to deduplicate by message_id, prioritizing inbox over others
@@ -235,7 +236,7 @@ pub async fn get_thread_emails<R: tauri::Runtime>(
     );
     query_builder.push_bind(account_id);
 
-    // Grouping condition: Either same thread_id, or same subject/sender fallback
+    // Grouping condition: Either same thread_id, or same subject/sender/recipient fallback
     query_builder.push(" AND (");
     
     let mut has_condition = false;
@@ -247,8 +248,11 @@ pub async fn get_thread_emails<R: tauri::Runtime>(
 
     if !norm_subject.is_empty() {
         if has_condition { query_builder.push(" OR "); }
-        query_builder.push(" e.normalized_subject = ");
-        query_builder.push_bind(norm_subject);
+        query_builder.push(" (e.normalized_subject = ");
+        query_builder.push_bind(&norm_subject);
+        query_builder.push(" AND e.sender_address = ");
+        query_builder.push_bind(&sender_address);
+        query_builder.push(")");
         has_condition = true;
     }
 
@@ -259,7 +263,7 @@ pub async fn get_thread_emails<R: tauri::Runtime>(
     
     query_builder.push(")
         )
-        SELECT id, account_id, folder_id, remote_id, message_id, thread_id, 1 as thread_count, in_reply_to, references_header, subject, sender_name, sender_address, date, flags, snippet, has_attachments,
+        SELECT id, account_id, folder_id, remote_id, message_id, thread_id, 1 as thread_count, in_reply_to, references_header, subject, sender_name, sender_address, recipient_to, date, flags, snippet, has_attachments,
         (subject LIKE 'Re:%' OR subject LIKE 're:%' OR in_reply_to IS NOT NULL) as is_reply,
         (subject LIKE 'Fwd:%' OR subject LIKE 'fwd:%' OR subject LIKE 'Fw:%' OR subject LIKE 'fw:%') as is_forward
         FROM thread_emails
@@ -684,19 +688,19 @@ pub async fn search_emails<R: tauri::Runtime>(
     
     query_builder.push_bind(fts_query);
     query_builder.push("),
-         latest_threads AS (
+          latest_threads AS (
             SELECT *,
             ROW_NUMBER() OVER (
-                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address, message_id) 
+                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address || '-' || COALESCE(recipient_to, ''), message_id) 
                 ORDER BY date DESC, id DESC
             ) as thread_rn,
             COUNT(*) OVER (
-                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address, message_id)
+                PARTITION BY account_id, COALESCE(NULLIF(thread_id, message_id), normalized_subject || '-' || sender_address || '-' || COALESCE(recipient_to, ''), message_id)
             ) as t_count
             FROM unique_messages
             WHERE msg_rn = 1
          )
-         SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.thread_id, e.t_count as thread_count, e.in_reply_to, e.references_header, e.subject, e.sender_name, e.sender_address, e.date, e.flags, e.snippet, e.has_attachments,
+         SELECT e.id, e.account_id, e.folder_id, e.remote_id, e.message_id, e.thread_id, e.t_count as thread_count, e.in_reply_to, e.references_header, e.subject, e.sender_name, e.sender_address, e.recipient_to, e.date, e.flags, e.snippet, e.has_attachments,
          (e.subject LIKE 'Re:%' OR e.subject LIKE 're:%' OR e.in_reply_to IS NOT NULL) as is_reply,
          (e.subject LIKE 'Fwd:%' OR e.subject LIKE 'fwd:%' OR e.subject LIKE 'Fw:%' OR e.subject LIKE 'fw:%') as is_forward
          FROM latest_threads e 
@@ -772,8 +776,8 @@ mod tests {
         let folder_id = row.0;
 
         let row: (i64,) = sqlx::query_as(
-            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, sender_address, date, flags, body_text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
+            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, sender_address, recipient_to, date, flags, body_text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
         )
         .bind(account_id)
         .bind(folder_id)
@@ -782,6 +786,7 @@ mod tests {
         .bind("msg-1")
         .bind("Test Subject")
         .bind("sender@example.com")
+        .bind("test@example.com")
         .bind(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .bind("[\"seen\"]")
         .bind("Hello content")
@@ -818,8 +823,8 @@ mod tests {
 
         // Insert another email with \"Re: Test Subject\" from same sender
         sqlx::query(
-            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, normalized_subject, sender_address, date, flags)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, normalized_subject, sender_address, recipient_to, date, flags)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(account_id)
         .bind(folder_id)
@@ -829,6 +834,7 @@ mod tests {
         .bind("Re: Test Subject")
         .bind("test subject")
         .bind("sender@example.com")
+        .bind("test@example.com")
         .bind(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .bind("[]")
         .execute(&pool)

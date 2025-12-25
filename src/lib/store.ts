@@ -32,6 +32,7 @@ export type Email = {
   subject: string | null;
   sender_name: string | null;
   sender_address: string;
+  recipient_to: string | null;
   date: string;
   flags: string;
   snippet: string | null;
@@ -276,6 +277,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
           subject: d.subject || "(No Subject)",
           sender_name: "Draft",
           sender_address: d.to_address || "(No Recipient)",
+          recipient_to: d.to_address || null,
           date: d.updated_at,
           flags: JSON.stringify(["draft"]),
           snippet: d.body_html
@@ -318,7 +320,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
             return newEmail;
           });
 
-          // If we fetched fewer items than we currently have, 
+          // If we fetched fewer items than we currently have,
           // we should keep the ones we already have that were beyond the limit
           // to avoid the list shrinking and causing scroll jumps.
           if (state.emails.length > fetchedEmails.length) {
@@ -429,11 +431,13 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       const selectedIndices = emails
         .map((e, i) => (selectedIds.has(e.id) ? i : -1))
         .filter((i) => i !== -1);
-      
+
       if (selectedIndices.length > 0) {
         // Find the index closest to currentIndex
-        const closestIndex = selectedIndices.reduce((prev, curr) => 
-          Math.abs(curr - currentIndex) < Math.abs(prev - currentIndex) ? curr : prev
+        const closestIndex = selectedIndices.reduce((prev, curr) =>
+          Math.abs(curr - currentIndex) < Math.abs(prev - currentIndex)
+            ? curr
+            : prev,
         );
         anchorId = emails[closestIndex].id;
       }

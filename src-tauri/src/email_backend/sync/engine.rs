@@ -245,12 +245,14 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             let flags: Vec<String> = env.flags.clone().into();
             let date_str = env.date.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
             let norm_subject = normalize_subject(&env.subject);
+            let recipient_to = Some(env.to.addr.clone());
             
             let res = sqlx::query(
-                "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, in_reply_to, references_header, subject, normalized_subject, sender_name, sender_address, date, flags)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, in_reply_to, references_header, subject, normalized_subject, sender_name, sender_address, recipient_to, date, flags)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(folder_id, remote_id) DO UPDATE SET 
-                    flags=excluded.flags"
+                    flags=excluded.flags,
+                    recipient_to=COALESCE(emails.recipient_to, excluded.recipient_to)"
             )
             .bind(account_id)
             .bind(folder_id)
@@ -263,6 +265,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             .bind(norm_subject)
             .bind(&env.from.name)
             .bind(&env.from.addr)
+            .bind(recipient_to)
             .bind(&date_str)
             .bind(serde_json::to_string(&flags).unwrap_or_default())
             .execute(&*pool)
@@ -587,7 +590,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             }
         }
 
-        // 3. Heuristic Bulk Threading (Subject + Sender) as fallback
+        // 3. Heuristic Bulk Threading (Subject + Sender + Recipient) as fallback
         // This sets the thread_id to the earliest message_id in the group
         let _ = sqlx::query(
             "UPDATE emails 
@@ -596,6 +599,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 FROM emails e2 
                 WHERE e2.account_id = emails.account_id 
                   AND e2.sender_address = emails.sender_address 
+                  AND COALESCE(e2.recipient_to, '') = COALESCE(emails.recipient_to, '')
                   AND e2.normalized_subject = emails.normalized_subject
                   AND e2.normalized_subject IS NOT NULL 
                   AND e2.normalized_subject != ''
