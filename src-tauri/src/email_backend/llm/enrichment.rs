@@ -16,13 +16,15 @@ Extract the following information about the sender '{sender}' from these email s
 - Job Title
 - Company
 - A brief professional bio (max 2 sentences)
+- is_personal_email: true if the sender appears to be an individual's personal email, false otherwise. (joh.doe@gmail.com and john.doe@company.com are both valid for this)
+- is_automated_mailer: true if the sender appears to be an automated mailing service or newsletter, false otherwise.
 
 Emails:
 {emails}
 
-Respond ONLY with a JSON object containing keys: 'job_title', 'company', 'bio'.
+Respond ONLY with a JSON object containing keys: 'job_title', 'company', 'bio', 'is_personal_email', 'is_automated_mailer'.
 If a piece of information is not found, use null.
-Example response: {{"job_title": "Software Engineer", "company": "Google", "bio": "A passionate developer working on AI."}}"#,
+Example response: {{"job_title": "Software Engineer", "company": "Google", "bio": "A passionate developer working on AI.", "is_personal_email": false, "is_automated_mailer": true}}"#,
         "sender", "emails"
     );
 

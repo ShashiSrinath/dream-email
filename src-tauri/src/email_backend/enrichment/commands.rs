@@ -100,6 +100,8 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     let mut twitter_handle = None;
     let mut linkedin_handle = None;
     let mut website_url = None;
+    let mut is_personal_email: Option<bool> = None;
+    let mut is_automated_mailer: Option<bool> = None;
 
     // 0. Try to find a name from existing emails in the DB
     let existing_name: Option<(Option<String>,)> = sqlx::query_as(
@@ -248,6 +250,12 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
                             bio = Some(b.to_string());
                         }
                     }
+                    if let Some(is_personal) = ai_data["is_personal_email"].as_bool() {
+                        is_personal_email = Some(is_personal);
+                    }
+                    if let Some(is_automated) = ai_data["is_automated_mailer"].as_bool() {
+                        is_automated_mailer = Some(is_automated);
+                    }
                     ai_last_enriched_at = Some(Utc::now());
                 }
             }
@@ -273,6 +281,8 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         twitter_handle,
         website_url,
         is_verified,
+        is_personal_email,
+        is_automated_mailer,
         ai_last_enriched_at,
         last_enriched_at: Some(now),
         created_at: Some(now),
@@ -283,9 +293,9 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         "INSERT INTO senders (
             address, name, avatar_url, job_title, company, bio, location, 
             github_handle, twitter_handle, linkedin_handle, website_url, 
-            is_verified, ai_last_enriched_at, last_enriched_at
+            is_verified, is_personal_email, is_automated_mailer, ai_last_enriched_at, last_enriched_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(address) DO UPDATE SET
             name = COALESCE(excluded.name, senders.name),
             avatar_url = excluded.avatar_url,
@@ -298,6 +308,8 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
             linkedin_handle = excluded.linkedin_handle,
             website_url = excluded.website_url,
             is_verified = excluded.is_verified,
+            is_personal_email = COALESCE(excluded.is_personal_email, senders.is_personal_email),
+            is_automated_mailer = COALESCE(excluded.is_automated_mailer, senders.is_automated_mailer),
             ai_last_enriched_at = COALESCE(excluded.ai_last_enriched_at, senders.ai_last_enriched_at),
             last_enriched_at = excluded.last_enriched_at,
             updated_at = CURRENT_TIMESTAMP"
@@ -314,6 +326,8 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     .bind(&sender.linkedin_handle)
     .bind(&sender.website_url)
     .bind(sender.is_verified)
+    .bind(sender.is_personal_email)
+    .bind(sender.is_automated_mailer)
     .bind(sender.ai_last_enriched_at)
     .bind(sender.last_enriched_at)
     .execute(&*pool)

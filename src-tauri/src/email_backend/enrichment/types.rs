@@ -15,6 +15,8 @@ pub struct Sender {
     pub twitter_handle: Option<String>,
     pub website_url: Option<String>,
     pub is_verified: bool,
+    pub is_personal_email: Option<bool>,
+    pub is_automated_mailer: Option<bool>,
     pub ai_last_enriched_at: Option<DateTime<Utc>>,
     pub last_enriched_at: Option<DateTime<Utc>>,
     pub created_at: Option<DateTime<Utc>>,
