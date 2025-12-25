@@ -1,5 +1,5 @@
 import { createFileRoute, defer, Await } from "@tanstack/react-router";
-import { Suspense, useState, useEffect, useMemo } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { format } from "date-fns";
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/_inbox/email/$emailId")({
   loader: async ({ params: { emailId } }) => {
     const id = parseInt(emailId);
     const email = await invoke<Email>("get_email_by_id", { emailId: id });
-    
+
     // Fetch all emails in the same thread if thread_id exists
     let threadEmails: Email[] = [email];
     if (email.thread_id) {
@@ -44,51 +44,54 @@ export function ThreadView() {
   return (
     <div className="flex h-full w-full min-w-0 overflow-hidden">
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-        <div className="p-6 border-b bg-background z-10 space-y-4 shrink-0">
-          <div className="flex justify-between items-start gap-4">
-            <h2 className="text-2xl font-bold flex-1 break-words line-clamp-2">{email.subject || "(No Subject)"}</h2>
-            <div className="flex gap-2 shrink-0">
-              <Button variant="outline" size="sm" onClick={() => {
-                setComposer({
-                  open: true,
-                  defaultTo: email.sender_address,
-                  defaultSubject: email.subject?.startsWith("Re: ") ? email.subject : `Re: ${email.subject}`,
-                  defaultBody: `<br><br>On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote>${email.snippet || ""}</blockquote>`,
-                });
-              }}>
-                <Reply className="w-4 h-4 mr-2" />
-                Reply
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => {
-                setComposer({
-                  open: true,
-                  defaultTo: '',
-                  defaultSubject: email.subject?.startsWith("Fwd: ") ? email.subject : `Fwd: ${email.subject}`,
-                  defaultBody: `<br><br>---------- Forwarded message ---------
+        <div className="p-6 border-b bg-background z-10 shrink-0">
+          <div className="max-w-4xl mx-auto w-full">
+            <div className="flex justify-between items-start gap-4">
+              <h2 className="text-2xl font-bold flex-1 break-words line-clamp-2">{email.subject || "(No Subject)"}</h2>
+              <div className="flex gap-2 shrink-0">
+                <Button variant="outline" size="sm" onClick={() => {
+                  setComposer({
+                    open: true,
+                    defaultTo: email.sender_address,
+                    defaultSubject: email.subject?.startsWith("Re: ") ? email.subject : `Re: ${email.subject}`,
+                    defaultBody: `<br><br>On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote>${email.snippet || ""}</blockquote>`,
+                  });
+                }}>
+                  <Reply className="w-4 h-4 mr-2" />
+                  Reply
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => {
+                  setComposer({
+                    open: true,
+                    defaultTo: '',
+                    defaultSubject: email.subject?.startsWith("Fwd: ") ? email.subject : `Fwd: ${email.subject}`,
+                    defaultBody: `<br><br>---------- Forwarded message ---------
 From: ${email.sender_name} &lt;${email.sender_address}&gt;
 Date: ${format(new Date(email.date), "PPP p")}
 Subject: ${email.subject}
 
 ${email.snippet || ""}`,
-                });
-              }}>
-                <Forward className="w-4 h-4 mr-2" />
-                Forward
-              </Button>
+                  });
+                }}>
+                  <Forward className="w-4 h-4 mr-2" />
+                  Forward
+                </Button>
+              </div>
             </div>
           </div>
         </div>
 
         <ScrollArea className="flex-1 min-h-0 bg-email-view">
-          <div className="max-w-4xl mx-auto my-8 space-y-4 px-4 pb-20">
+          <div className="flex flex-col min-h-full">
             {threadEmails.map((msg, index) => (
-              <ThreadMessage 
-                key={msg.id} 
-                email={msg} 
+              <ThreadMessage
+                key={msg.id}
+                email={msg}
                 isLast={index === threadEmails.length - 1}
                 defaultExpanded={index === threadEmails.length - 1 || threadEmails.length === 1}
               />
             ))}
+            <div className="h-20 shrink-0" /> {/* Bottom spacing */}
           </div>
         </ScrollArea>
       </div>
@@ -121,8 +124,10 @@ function ThreadMessage({ email, isLast, defaultExpanded }: { email: Email, isLas
   }, [isExpanded, email.id, content, loading]);
 
   const handleContentClick = async (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    const anchor = target.closest("a");
+    // For Shadow DOM, we need to check the composed path to find the actual element
+    const path = e.nativeEvent.composedPath();
+    const anchor = path.find(el => (el as HTMLElement).tagName === 'A') as HTMLAnchorElement | undefined;
+    
     if (anchor) {
       const href = anchor.getAttribute("href");
       if (href && (href.startsWith("http") || href.startsWith("mailto:"))) {
@@ -138,69 +143,78 @@ function ThreadMessage({ email, isLast, defaultExpanded }: { email: Email, isLas
 
   return (
     <div className={cn(
-        "bg-background rounded-xl shadow-sm border overflow-hidden transition-all",
-        isExpanded && "email-paper"
+        "bg-card text-card-foreground border-b overflow-hidden transition-all flex flex-col",
+        isExpanded ? "flex-grow shrink-0" : "hover:bg-accent/50"
     )}>
       {/* Header */}
-      <div 
+      <div
         className={cn(
-            "p-4 flex items-center gap-4 select-none cursor-pointer transition-colors",
-            isExpanded ? "border-b bg-muted" : "hover:bg-muted/50"
+            "p-6 flex items-center gap-4 select-none cursor-pointer transition-colors shrink-0",
+            isExpanded ? "border-b bg-muted/30" : ""
         )}
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <SenderAvatar 
-          address={email.sender_address}
-          name={email.sender_name}
-          avatarClassName="w-8 h-8"
-        />
-        <div className="flex-1 min-w-0 flex items-center justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="font-semibold truncate">
-              {email.sender_name || email.sender_address}
-            </span>
-            {!isExpanded && (
-                <span className="text-sm text-muted-foreground truncate italic">
-                    {email.snippet}
+        <div className="max-w-4xl mx-auto w-full flex items-center gap-4">
+            <SenderAvatar
+            address={email.sender_address}
+            name={email.sender_name}
+            avatarClassName="w-10 h-10 border border-border"
+            />
+            <div className="flex-1 min-w-0 flex items-center justify-between">
+            <div className="flex flex-col min-w-0">
+                <span className="font-bold text-foreground text-base truncate">
+                {email.sender_name || email.sender_address}
                 </span>
-            )}
-          </div>
-          <div className="flex items-center gap-4 shrink-0">
-            <span className="text-xs text-muted-foreground">
-              {format(new Date(email.date), "MMM d, p")}
-            </span>
-            <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8"
-                onClick={(e) => {
-                    e.stopPropagation();
-                    setIsExpanded(!isExpanded);
-                }}
-            >
-              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            </Button>
-          </div>
+                {!isExpanded && (
+                    <span className="text-sm text-muted-foreground truncate italic max-w-[500px]">
+                        {email.snippet}
+                    </span>
+                )}
+                {isExpanded && (
+                    <span className="text-xs text-muted-foreground truncate">
+                        To: {email.sender_address}
+                    </span>
+                )}
+            </div>
+            <div className="flex items-center gap-4 shrink-0">
+                <span className="text-xs font-medium text-muted-foreground">
+                {format(new Date(email.date), "MMM d, p")}
+                </span>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 hover:bg-accent"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setIsExpanded(!isExpanded);
+                    }}
+                >
+                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </Button>
+            </div>
+            </div>
         </div>
       </div>
 
       {/* Content */}
       {isExpanded && (
-        <div className="p-4 md:p-8 space-y-6">
-          {loading ? (
-             <div className="space-y-4">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-5/6" />
-             </div>
-          ) : (
-            <>
-              <EmailBody content={content} onContentClick={handleContentClick} />
-              {attachments.length > 0 && (
-                <AttachmentsList attachments={attachments} />
-              )}
-            </>
-          )}
+        <div className="flex-1 flex flex-col bg-[#f8f9fa] border-t">
+            <div className="p-6 md:p-10 max-w-4xl mx-auto w-full flex-1 flex flex-col">
+                {loading ? (
+                <div className="space-y-4 flex-1">
+                    <Skeleton className="h-4 w-3/4 bg-[#e5e7eb]" />
+                    <Skeleton className="h-4 w-full bg-[#e5e7eb]" />
+                    <Skeleton className="h-4 w-5/6 bg-[#e5e7eb]" />
+                </div>
+                ) : (
+                <div className="space-y-8 flex-1 flex flex-col">
+                    <EmailBody content={content} onContentClick={handleContentClick} />
+                    {attachments.length > 0 && (
+                    <AttachmentsList attachments={attachments} />
+                    )}
+                </div>
+                )}
+            </div>
         </div>
       )}
     </div>
@@ -208,6 +222,8 @@ function ThreadMessage({ email, isLast, defaultExpanded }: { email: Email, isLas
 }
 
 function EmailBody({ content, onContentClick }: { content: EmailContent | null, onContentClick: (e: React.MouseEvent) => void }) {
+    const shadowRef = useRef<HTMLDivElement>(null);
+
     const sanitizedHtml = useMemo(() => {
         if (!content?.body_html) return null;
         return DOMPurify.sanitize(content.body_html, {
@@ -218,31 +234,74 @@ function EmailBody({ content, onContentClick }: { content: EmailContent | null, 
         });
     }, [content?.body_html]);
 
+    useEffect(() => {
+        if (shadowRef.current && sanitizedHtml) {
+            const container = shadowRef.current;
+            let shadow = container.shadowRoot;
+            if (!shadow) {
+                shadow = container.attachShadow({ mode: "open" });
+            }
+
+            shadow.innerHTML = `
+                <style>
+                    :host {
+                        display: block;
+                        width: 100%;
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                        line-height: 1.6;
+                        color: #1a1a1a;
+                        background-color: transparent;
+                        word-wrap: break-word;
+                        font-size: 15px;
+                    }
+                    #content-inner {
+                        padding: 1px 0;
+                    }
+                    img { max-width: 100%; height: auto; display: block; margin: 10px 0; }
+                    pre { white-space: pre-wrap; background: rgba(0,0,0,0.05); padding: 10px; border-radius: 4px; font-family: monospace; }
+                    a { color: #2563eb; text-decoration: underline; }
+                    blockquote { 
+                        border-left: 3px solid #cbd5e1;
+                        margin: 10px 0 10px 10px; 
+                        padding-left: 15px;
+                        color: #64748b;
+                    }
+                    * { max-width: 100%; box-sizing: border-box; }
+                </style>
+                <div id="content-inner">${sanitizedHtml}</div>
+            `;
+        }
+    }, [sanitizedHtml]);
+
     // Simple parser for text content to handle quotes
     const renderTextContent = (text: string) => {
-        const lines = text.split('\n');
-        const groups: { type: 'text' | 'quote', lines: string[] }[] = [];
-        
-        lines.forEach(line => {
-            const isQuote = line.trim().startsWith('>');
+        const lines = text.split("\n");
+        const groups: { type: "text" | "quote"; lines: string[] }[] = [];
+
+        lines.forEach((line) => {
+            const isQuote = line.trim().startsWith(">");
             const lastGroup = groups[groups.length - 1];
-            
-            if (lastGroup && ((isQuote && lastGroup.type === 'quote') || (!isQuote && lastGroup.type === 'text'))) {
+
+            if (
+                lastGroup &&
+                ((isQuote && lastGroup.type === "quote") ||
+                    (!isQuote && lastGroup.type === "text"))
+            ) {
                 lastGroup.lines.push(line);
             } else {
-                groups.push({ type: isQuote ? 'quote' : 'text', lines: [line] });
+                groups.push({ type: isQuote ? "quote" : "text", lines: [line] });
             }
         });
 
         return (
-            <div className="whitespace-pre-wrap font-sans text-sm text-[#1a1a1a]">
-                {groups.map((group, i) => (
-                    group.type === 'quote' ? (
-                        <QuotedContent key={i} text={group.lines.join('\n')} />
+            <div className="whitespace-pre-wrap font-sans text-[15px] leading-relaxed text-[#1a1a1a] flex-1">
+                {groups.map((group, i) =>
+                    group.type === "quote" ? (
+                        <QuotedContent key={i} text={group.lines.join("\n")} />
                     ) : (
-                        <div key={i}>{group.lines.join('\n')}</div>
+                        <div key={i}>{group.lines.join("\n")}</div>
                     )
-                ))}
+                )}
             </div>
         );
     };
@@ -250,9 +309,9 @@ function EmailBody({ content, onContentClick }: { content: EmailContent | null, 
     if (!content) return null;
 
     return (
-        <div className="prose-email max-w-none" onClick={onContentClick}>
+        <div className="w-full flex-1 flex flex-col min-h-0" onClick={onContentClick}>
             {sanitizedHtml ? (
-                <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+                <div ref={shadowRef} className="w-full flex-1 min-h-0" />
             ) : (
                 renderTextContent(content.body_text || "No content available.")
             )}
@@ -265,17 +324,17 @@ function QuotedContent({ text }: { text: string }) {
 
     return (
         <div className="my-2">
-            <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-6 px-2 text-muted-foreground hover:text-foreground"
+            <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[#64748b] hover:text-[#1a1a1a] hover:bg-black/5"
                 onClick={() => setIsExpanded(!isExpanded)}
             >
                 <MoreHorizontal className="w-4 h-4 mr-2" />
                 {isExpanded ? "Hide quoted text" : "Show quoted text"}
             </Button>
             {isExpanded && (
-                <div className="border-l-2 border-muted pl-4 mt-2 italic text-muted-foreground">
+                <div className="border-l-2 border-[#cbd5e1] pl-4 mt-2 italic text-[#64748b]">
                     {text}
                 </div>
             )}
@@ -310,8 +369,8 @@ function AttachmentsList({ attachments }: { attachments: Attachment[] }) {
     };
 
     return (
-        <div className="border-t pt-6">
-            <h3 className="text-sm font-semibold flex items-center gap-2 mb-4">
+        <div className="border-t border-[#cbd5e1] pt-6">
+            <h3 className="text-sm font-semibold flex items-center gap-2 mb-4 text-[#1a1a1a]">
                 <Paperclip className="w-4 h-4" />
                 Attachments ({attachments.length})
             </h3>
@@ -320,16 +379,16 @@ function AttachmentsList({ attachments }: { attachments: Attachment[] }) {
                     <button
                     key={att.id}
                     onClick={() => downloadAttachment(att)}
-                    className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors text-left group"
+                    className="flex items-center gap-3 p-3 border border-[#cbd5e1] rounded-lg hover:bg-black/5 transition-colors text-left group"
                     >
-                        <div className="w-10 h-10 rounded bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                        <div className="w-10 h-10 rounded bg-[#2563eb]/10 flex items-center justify-center text-[#2563eb] shrink-0">
                             <Mail className="w-5 h-5" />
                         </div>
                         <div className="min-w-0">
-                            <p className="text-xs font-medium truncate group-hover:text-primary transition-colors">
+                            <p className="text-xs font-medium truncate text-[#1a1a1a] group-hover:text-[#2563eb] transition-colors">
                             {att.filename || "Unnamed"}
                             </p>
-                            <p className="text-[10px] text-muted-foreground">
+                            <p className="text-[10px] text-[#64748b]">
                             {formatSize(att.size)}
                             </p>
                         </div>

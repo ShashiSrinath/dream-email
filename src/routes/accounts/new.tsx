@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { ChevronLeft, Info, Lock, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useEmailStore } from "@/lib/store";
 
 export const Route = createFileRoute("/accounts/new")({
   component: RouteComponent,
@@ -19,8 +20,9 @@ function RouteComponent() {
   const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
-    const unlistenAdded = listen("google-account-added", (event) => {
+    const unlistenAdded = listen("google-account-added", async (event) => {
       console.log("Google account added:", event.payload);
+      await useEmailStore.getState().fetchAccountsAndFolders();
       setIsConnecting(false);
       navigate({ to: "/" });
     });

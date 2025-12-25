@@ -79,9 +79,8 @@ export type Attachment = {
 
 interface UnifiedCounts {
   primary: number;
-  others: number;
+  sent: number;
   spam: number;
-  drafts: number;
 }
 
 interface EmailState {
@@ -162,7 +161,7 @@ const initialState: Pick<
   isInitialized: false,
   accounts: [],
   accountFolders: {},
-  unifiedCounts: { primary: 0, others: 0, spam: 0, drafts: 0 },
+  unifiedCounts: { primary: 0, sent: 0, spam: 0 },
   emails: [],
   loadingEmails: false,
   hasMore: true,
@@ -211,10 +210,9 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       if (!counts) return;
       set({
         unifiedCounts: {
-          primary: counts.primary_count || 0,
-          others: counts.others || 0,
+          primary: counts.primary || 0,
+          sent: counts.sent || 0,
           spam: counts.spam || 0,
-          drafts: counts.drafts || 0,
         },
       });
     } catch (error) {
@@ -271,6 +269,8 @@ export const useEmailStore = create<EmailState>((set, get) => ({
           folder_id: -1, // Special ID for drafts
           remote_id: `draft-${d.id}`,
           message_id: null,
+          thread_id: null,
+          thread_count: 1,
           subject: d.subject || "(No Subject)",
           sender_name: "Draft",
           sender_address: d.to_address || "(No Recipient)",

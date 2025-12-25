@@ -22,7 +22,16 @@ pub struct SyncEngine<R: tauri::Runtime = tauri::Wry> {
     idle_senders: Arc<Mutex<HashMap<i64, oneshot::Sender<()>>>>,
 }
 
-const SYNC_BATCH_SIZE: u32 = 500;
+impl<R: tauri::Runtime> Clone for SyncEngine<R> {
+    fn clone(&self) -> Self {
+        Self {
+            app_handle: self.app_handle.clone(),
+            idle_senders: self.idle_senders.clone(),
+        }
+    }
+}
+
+const SYNC_BATCH_SIZE: u32 = 100;
 
 use tauri_plugin_notification::NotificationExt;
 
@@ -102,6 +111,21 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         }
     }
 
+    pub fn trigger_sync_for_account(&self, account: Account) {
+        let app_handle = self.app_handle.clone();
+        let idle_senders = self.idle_senders.clone();
+        
+        tauri::async_runtime::spawn(async move {
+            // 1. Initial sync
+            if let Err(e) = Self::sync_account(&app_handle, &account).await {
+                error!("Initial sync failed for {}: {}", account.email(), e);
+            }
+            
+            // 2. Start IDLE
+            Self::start_idle_for_account(app_handle, account, idle_senders).await;
+        });
+    }
+
     pub async fn refresh_folder(app_handle: &tauri::AppHandle<R>, account_id: i64, folder_id: i64) -> Result<(), String> {
         let pool = app_handle.state::<SqlitePool>();
         let folder_info: (String, Option<String>) = sqlx::query_as("SELECT path, role FROM folders WHERE id = ?")
@@ -150,12 +174,19 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         notify: bool,
     ) -> Result<(), String> {
         let pool = app_handle.state::<SqlitePool>();
+        let mut success_count = 0;
+        let mut failure_count = 0;
+        let mut last_error = None;
+        let total = envelopes.len();
+
         for env in envelopes {
             let flags: Vec<String> = env.flags.clone().into();
+            let date_str = env.date.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            
             let res = sqlx::query(
                 "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, in_reply_to, references_header, subject, sender_name, sender_address, date, flags)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(account_id, remote_id) DO UPDATE SET 
+                 ON CONFLICT(folder_id, remote_id) DO UPDATE SET 
                     flags=excluded.flags"
             )
             .bind(account_id)
@@ -168,25 +199,53 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             .bind(&env.subject)
             .bind(&env.from.name)
             .bind(&env.from.addr)
-            .bind(env.date.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+            .bind(&date_str)
             .bind(serde_json::to_string(&flags).unwrap_or_default())
             .execute(&*pool)
-            .await
-            .map_err(|e: sqlx::Error| e.to_string())?;
+            .await;
 
-            if notify && res.rows_affected() > 0 && !flags.contains(&"seen".to_string()) {
-                info!("Sending notification for new email: {}", env.subject);
-                let _ = app_handle.notification()
-                    .builder()
-                    .title(format!("New Email: {}", env.subject))
-                    .body(format!("From: {}", env.from.name.as_deref().unwrap_or(&env.from.addr)))
-                    .show();
+            match res {
+                Ok(r) => {
+                    success_count += 1;
+                    if notify && r.rows_affected() > 0 && !flags.contains(&"seen".to_string()) {
+                        info!("Sending notification for new email: {}", env.subject);
+                        let _ = app_handle.notification()
+                            .builder()
+                            .title(format!("New Email: {}", env.subject))
+                            .body(format!("From: {}", env.from.name.as_deref().unwrap_or(&env.from.addr)))
+                            .show();
+                    }
+                }
+                Err(e) => {
+                    failure_count += 1;
+                    last_error = Some(e.to_string());
+                    error!("Failed to save email {} in folder {}: {}", env.id, folder_id, e);
+                }
             }
         }
+        
+        info!("Saved {}/{} envelopes for folder {}", success_count, total, folder_id);
+        
+        // Update unread count for the folder based on actual emails in DB
+        let _ = sqlx::query(
+            "UPDATE folders SET unread_count = (
+                SELECT COUNT(*) FROM emails 
+                WHERE folder_id = ? AND (flags NOT LIKE '%seen%' AND flags NOT LIKE '%\"seen\"%')
+            ) WHERE id = ?"
+        )
+        .bind(folder_id)
+        .bind(folder_id)
+        .execute(&*pool)
+        .await;
+
+        if failure_count > 0 && success_count == 0 {
+            return Err(format!("Failed to save any emails in batch. Last error: {}", last_error.unwrap_or_default()));
+        }
+        
         Ok(())
     }
 
-    async fn start_idle_for_account(app_handle: tauri::AppHandle<R>, account: Account, idle_senders: Arc<Mutex<HashMap<i64, oneshot::Sender<()>>>>) {
+    pub async fn start_idle_for_account(app_handle: tauri::AppHandle<R>, account: Account, idle_senders: Arc<Mutex<HashMap<i64, oneshot::Sender<()>>>>) {
         let account_id = match account.id() {
             Some(id) => id,
             None => return,
@@ -227,7 +286,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             info!("IDLE waiting for updates for {}...", account.email());
             
             // Select INBOX and get current state
-            let folder_data = client.examine_mailbox("INBOX").await.map_err(|e| e.to_string())?;
+            let folder_data = client.select_mailbox("INBOX").await.map_err(|e| e.to_string())?;
             
             // Sync current state
             Self::sync_folder(app_handle, &mut *client, account, "INBOX", Some("inbox".to_string()), &folder_data).await?;
@@ -236,7 +295,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
             
             // Start a timer to stop IDLE after 29 minutes (IMAP IDLE should be refreshed every 29 mins)
-            let app_handle_timer = app_handle.clone();
+            let _app_handle_timer = app_handle.clone();
             let account_email = account.email().to_string();
             tauri::async_runtime::spawn(async move {
                 sleep(Duration::from_secs(29 * 60)).await;
@@ -260,9 +319,13 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         let account_id = account.id().ok_or("Account ID missing")?;
         let pool = app_handle.state::<SqlitePool>();
 
+        info!("Syncing folder {} for {}. Role: {:?}", folder_name, account.email(), role);
+
         let current_uid_validity = folder_data.uid_validity.map(|u: NonZeroU32| u.get() as i64).unwrap_or(0);
         let current_uid_next = folder_data.uid_next.map(|u: NonZeroU32| u.get() as i64).unwrap_or(0);
         let total_count = folder_data.exists.unwrap_or(0) as i64;
+
+        info!("Folder {} state: UIDValidity={}, UIDNext={}, Exists={}", folder_name, current_uid_validity, current_uid_next, total_count);
 
         // 1. Get stored folder info
         let stored_folder: Option<(i64, i64, i64, Option<String>)> = sqlx::query_as(
@@ -276,6 +339,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
 
         let (folder_id, stored_uid_validity, stored_uid_next) = match stored_folder {
             Some((id, uv, un, stored_role)) => {
+                info!("Found stored folder {} (id={}). Stored UIDValidity={}, UIDNext={}", folder_name, id, uv, un);
                 // If role changed or was empty, update it
                 if let Some(ref new_role) = role {
                     if stored_role.as_ref() != Some(new_role) {
@@ -290,6 +354,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 (id, uv, un)
             },
             None => {
+                info!("Folder {} not in DB, creating entry", folder_name);
                 // Folder not in DB yet, insert it
                 let row: (i64,) = sqlx::query_as(
                     "INSERT INTO folders (account_id, name, path, role, uid_validity, uid_next, total_count)
@@ -299,13 +364,14 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 .bind(account_id)
                 .bind(folder_name)
                 .bind(folder_name)
-                .bind(role.unwrap_or_default())
+                .bind(role.clone().unwrap_or_default())
                 .bind(current_uid_validity)
                 .bind(current_uid_next)
                 .bind(total_count)
                 .fetch_one(&*pool)
                 .await
                 .map_err(|e| e.to_string())?;
+                info!("Created folder entry {} with id {}", folder_name, row.0);
                 (row.0, 0, 0) // Treat as full sync
             }
         };
@@ -321,21 +387,33 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         }
 
         if stored_uid_validity != current_uid_validity || stored_uid_next == 0 {
-            info!("Performing full sync for folder {} of {}", folder_name, account.email());
+            info!("Performing full sync for folder {} of {} (total={})", folder_name, account.email(), total_count);
             let mut end = total_count as u32;
             while end > 0 {
                 let start = if end > SYNC_BATCH_SIZE { end - SYNC_BATCH_SIZE + 1 } else { 1 };
-                info!("Fetching batch {}:{} for folder {} of {}", start, end, folder_name, account.email());
+                info!("Fetching envelopes sequence {}:{} for folder {}", start, end, folder_name);
                 
                 let start_nz = NonZeroU32::new(start).unwrap_or(NonZeroU32::new(1).unwrap());
                 let end_nz = NonZeroU32::new(end).unwrap_or(NonZeroU32::new(1).unwrap());
                 let seq = (start_nz..=end_nz).into();
 
-                let envelopes = client.fetch_envelopes_by_sequence(seq).await.map_err(|e| e.to_string())?;
-                if envelopes.is_empty() { break; }
+                let envelopes = client.fetch_envelopes_by_sequence(seq).await.map_err(|e| {
+                    error!("Failed to fetch envelopes batch {}:{} for {}: {}", start, end, folder_name, e);
+                    e.to_string()
+                })?;
+                
+                if envelopes.is_empty() { 
+                    info!("No envelopes returned for sequence {}:{} in folder {}", start, end, folder_name);
+                    break; 
+                }
+                
+                info!("Fetched {} envelopes for sequence {}:{} in folder {}", envelopes.len(), start, end, folder_name);
                 
                 let is_initial = stored_uid_next == 0;
-                Self::save_envelopes(app_handle, account_id, folder_id, envelopes, !is_initial).await?;
+                if let Err(e) = Self::save_envelopes(app_handle, account_id, folder_id, envelopes, !is_initial).await {
+                    error!("Critical failure saving envelopes for {}: {}. Aborting folder sync.", folder_name, e);
+                    return Err(e);
+                }
                 let _ = app_handle.emit("emails-updated", account_id);
                 
                 end = if start > 1 { start - 1 } else { 0 };
@@ -345,10 +423,17 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             
             let start_uid = NonZeroU32::new(stored_uid_next as u32).unwrap_or(NonZeroU32::new(1).unwrap());
             let uids = (start_uid..).into();
-            let envelopes = client.fetch_envelopes(uids).await.map_err(|e| e.to_string())?;
+            let envelopes = client.fetch_envelopes(uids).await.map_err(|e| {
+                error!("Failed to fetch envelopes incremental UID {}:* for {}: {}", stored_uid_next, folder_name, e);
+                e.to_string()
+            })?;
             
             if !envelopes.is_empty() {
-                Self::save_envelopes(app_handle, account_id, folder_id, envelopes, true).await?;
+                info!("Fetched {} new envelopes incrementally for folder {}", envelopes.len(), folder_name);
+                if let Err(e) = Self::save_envelopes(app_handle, account_id, folder_id, envelopes, true).await {
+                    error!("Critical failure saving incremental envelopes for {}: {}. Aborting folder sync.", folder_name, e);
+                    return Err(e);
+                }
                 let _ = app_handle.emit("emails-updated", account_id);
             }
         } else {
@@ -356,6 +441,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         }
 
         // Update folder info with latest state from server
+        info!("Updating folder {} entry with new UIDNext={}", folder_name, current_uid_next);
         sqlx::query(
             "UPDATE folders SET uid_validity = ?, uid_next = ?, total_count = ? WHERE id = ?"
         )
@@ -410,7 +496,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         Ok(())
     }
 
-    async fn sync_all_accounts(app_handle: &tauri::AppHandle<R>) -> Result<(), String> {
+    pub async fn sync_all_accounts(app_handle: &tauri::AppHandle<R>) -> Result<(), String> {
         let manager = AccountManager::new(app_handle).await?;
         let registry = manager.load().await?;
         
@@ -423,10 +509,14 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         Ok(())
     }
 
-    async fn sync_account(app_handle: &tauri::AppHandle<R>, account: &Account) -> Result<(), String> {
+    pub async fn sync_account(app_handle: &tauri::AppHandle<R>, account: &Account) -> Result<(), String> {
+        // Ensure we have the latest account info with ID from DB
+        let manager = AccountManager::new(app_handle).await?;
+        let account = manager.get_account_by_id(account.id().ok_or("Account ID missing before sync")?).await?;
+        
         match account {
             Account::Google(google) => {
-                Self::sync_google_account(app_handle, google).await?;
+                Self::sync_google_account(app_handle, &google).await?;
             }
         }
         Ok(())
@@ -443,35 +533,29 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         );
 
         let backend = backend_builder.build().await.map_err(|e| e.to_string())?;
-
         let folders = backend.list_folders().await.map_err(|e| e.to_string())?;
-        info!("Found {} folders for {}", folders.len(), google.email);
-
+        
         let context = (*backend.context).clone();
 
         for folder in folders {
+            let name_lower = folder.name.to_lowercase();
             let role = if folder.is_inbox() {
                 Some("inbox".to_string())
             } else if folder.is_sent() {
                 Some("sent".to_string())
-            } else if folder.is_drafts() {
-                Some("drafts".to_string())
-            } else if folder.is_trash() {
-                Some("trash".to_string())
+            } else if name_lower.contains("spam") || name_lower.contains("junk") {
+                Some("spam".to_string())
             } else {
-                // Try to detect other roles from name if kind is not specific enough
-                let name = folder.name.to_lowercase();
-                if name.contains("spam") || name.contains("junk") {
-                    Some("spam".to_string())
-                } else if name.contains("archive") || name.contains("all mail") {
-                    Some("archive".to_string())
-                } else {
-                    None
-                }
+                // Ignore all other folders for the revamped inbox
+                continue;
             };
 
             let mut client = context.client().await;
-            let folder_data = client.examine_mailbox(&folder.name).await.map_err(|e| e.to_string())?;
+            info!("Syncing revamped folder: {} as {:?} for {}", folder.name, role, google.email);
+            let folder_data = client.select_mailbox(&folder.name).await.map_err(|e| {
+                error!("Failed to select mailbox {}: {}", folder.name, e);
+                e.to_string()
+            })?;
             Self::sync_folder(app_handle, &mut *client, &account, &folder.name, role, &folder_data).await?;
         }
 

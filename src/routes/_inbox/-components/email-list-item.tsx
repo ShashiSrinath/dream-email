@@ -74,7 +74,7 @@ export function EmailListItem({
       }}
       preload={"intent"}
       className={cn(
-        "flex items-start gap-3 p-3 text-left border-b transition-all hover:bg-muted/50 group antialiased",
+        "flex items-start gap-4 p-4 text-left border-b transition-all hover:bg-muted/50 group antialiased",
         selectedEmailId === email.id && "bg-muted shadow-[inset_3px_0_0_0_theme(colors.primary.DEFAULT)]",
         isSelected && "bg-primary/5",
         isUnread && !isSelected && "bg-blue-50/30"

@@ -3,7 +3,7 @@ use email::account::Error;
 use email::imap::config::ImapConfig;
 use oauth::v2_0::{AuthorizationCodeGrant, Client};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -143,6 +143,17 @@ pub async fn get_auth_url(app_handle: &AppHandle) {
                         if let Err(e) = manager.add_account(Account::Google(account.clone())).await {
                             let _ = app_handle.emit("google-account-error", e);
                         } else {
+                            // Reload account to get the ID
+                            let registry = manager.load().await.map_err(|e| e.to_string()).unwrap();
+                            let added_account = registry.accounts.iter().find(|a| a.email() == account.email).unwrap().clone();
+
+                            // Trigger initial sync and start IDLE
+                            if let Some(sync_engine) = app_handle.try_state::<crate::email_backend::sync::SyncEngine>() {
+                                sync_engine.trigger_sync_for_account(added_account);
+                            }
+
+                            let _ = app_handle.emit("emails-updated", ());
+
                             let mut public_account = account;
                             public_account.access_token = None;
                             public_account.refresh_token = None;

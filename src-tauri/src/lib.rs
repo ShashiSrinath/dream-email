@@ -18,6 +18,7 @@ pub fn run() {
     dotenvy::dotenv().ok();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout)).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| match event {
@@ -74,9 +75,10 @@ pub fn run() {
 
             app.manage(pool);
 
-            let sync_handle = handle.clone();
+            let sync_engine = SyncEngine::new(handle.clone());
+            app.manage(sync_engine.clone());
+            
             tauri::async_runtime::spawn(async move {
-                let sync_engine = SyncEngine::new(sync_handle);
                 sync_engine.start().await;
             });
 

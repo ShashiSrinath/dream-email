@@ -14,11 +14,8 @@ import {
   Inbox,
   Mail,
   Settings,
-  Star,
   PenLine,
   Send,
-  Trash2,
-  Archive,
   ShieldAlert,
   LayoutGrid,
 } from "lucide-react";
@@ -104,65 +101,6 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={search.view === "others"}>
-                  <Link
-                    to="/"
-                    search={{
-                      account_id: search.account_id,
-                      view: "others",
-                      filter: undefined,
-                    }}
-                    className="w-full flex items-center"
-                  >
-                    <LayoutGrid className="w-4 h-4" />
-                    <span>Others</span>
-                    {unifiedCounts.others > 0 && (
-                      <span className="ml-auto text-[10px] text-muted-foreground font-medium">
-                        {unifiedCounts.others}
-                      </span>
-                    )}
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  isActive={search.filter === "flagged"}
-                >
-                  <Link
-                    to="/"
-                    search={{
-                      account_id: search.account_id,
-                      view: search.view,
-                      filter: "flagged",
-                    }}
-                  >
-                    <Star className="w-4 h-4" />
-                    <span>Flagged</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={search.view === "drafts"}>
-                  <Link
-                    to="/"
-                    search={{
-                      account_id: search.account_id,
-                      view: "drafts",
-                      filter: undefined,
-                    }}
-                  >
-                    <PenLine className="w-4 h-4" />
-                    <span>Drafts</span>
-                    {unifiedCounts.drafts > 0 && (
-                      <span className="ml-auto text-[10px] text-muted-foreground">
-                        {unifiedCounts.drafts}
-                      </span>
-                    )}
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={search.view === "sent"}>
                   <Link
                     to="/"
@@ -194,36 +132,6 @@ export function AppSidebar() {
                         {unifiedCounts.spam}
                       </span>
                     )}
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={search.view === "trash"}>
-                  <Link
-                    to="/"
-                    search={{
-                      account_id: search.account_id,
-                      view: "trash",
-                      filter: undefined,
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span>Trash</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={search.view === "archive"}>
-                  <Link
-                    to="/"
-                    search={{
-                      account_id: search.account_id,
-                      view: "archive",
-                      filter: undefined,
-                    }}
-                  >
-                    <Archive className="w-4 h-4" />
-                    <span>Archive</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

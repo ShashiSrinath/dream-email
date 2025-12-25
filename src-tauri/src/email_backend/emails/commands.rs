@@ -62,9 +62,8 @@ pub struct Draft {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UnifiedCounts {
     pub primary: i32,
-    pub others: i32,
+    pub sent: i32,
     pub spam: i32,
-    pub drafts: i32,
 }
 
 #[tauri::command]
@@ -107,10 +106,6 @@ pub async fn get_emails<R: tauri::Runtime>(
             "primary" => query_builder.push(" f.role = 'inbox'"),
             "spam" => query_builder.push(" f.role = 'spam'"),
             "sent" => query_builder.push(" f.role = 'sent'"),
-            "drafts" => query_builder.push(" f.role = 'drafts'"),
-            "trash" => query_builder.push(" f.role = 'trash'"),
-            "archive" => query_builder.push(" f.role = 'archive'"),
-            "others" => query_builder.push(" (f.role IS NULL OR f.role = '' OR f.role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive'))"),
             _ => &mut query_builder,
         };
     } else {
@@ -147,12 +142,11 @@ pub async fn get_emails<R: tauri::Runtime>(
 pub async fn get_unified_counts<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) -> Result<UnifiedCounts, String> {
     let pool = app_handle.state::<SqlitePool>();
     
-    let row: (i32, i32, i32, i32) = sqlx::query_as(
+    let row: (i32, i32, i32) = sqlx::query_as(
         "SELECT 
             SUM(CASE WHEN role = 'inbox' THEN unread_count ELSE 0 END) as primary_count,
-            SUM(CASE WHEN (role IS NULL OR role = '' OR role NOT IN ('inbox', 'spam', 'sent', 'drafts', 'trash', 'archive')) THEN unread_count ELSE 0 END) as others,
-            SUM(CASE WHEN role = 'spam' THEN unread_count ELSE 0 END) as spam,
-            SUM(CASE WHEN role = 'drafts' THEN total_count ELSE 0 END) as drafts
+            SUM(CASE WHEN role = 'sent' THEN total_count ELSE 0 END) as sent_count,
+            SUM(CASE WHEN role = 'spam' THEN unread_count ELSE 0 END) as spam_count
          FROM folders"
     )
     .fetch_one(&*pool)
@@ -161,9 +155,8 @@ pub async fn get_unified_counts<R: tauri::Runtime>(app_handle: tauri::AppHandle<
 
     Ok(UnifiedCounts {
         primary: row.0,
-        others: row.1,
+        sent: row.1,
         spam: row.2,
-        drafts: row.3,
     })
 }
 
@@ -185,8 +178,12 @@ pub async fn get_thread_emails<R: tauri::Runtime>(app_handle: tauri::AppHandle<R
     let pool = app_handle.state::<SqlitePool>();
     let emails = sqlx::query_as::<_, Email>(
         "SELECT id, account_id, folder_id, remote_id, message_id, thread_id, 1 as thread_count, in_reply_to, references_header, subject, sender_name, sender_address, date, flags, snippet, has_attachments 
-         FROM emails 
-         WHERE thread_id = ? 
+         FROM (
+             SELECT *, ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY CASE WHEN folder_id IN (SELECT id FROM folders WHERE role = 'inbox') THEN 0 ELSE 1 END, date DESC) as rn
+             FROM emails 
+             WHERE thread_id = ?
+         )
+         WHERE rn = 1
          ORDER BY date ASC"
     )
     .bind(thread_id)
