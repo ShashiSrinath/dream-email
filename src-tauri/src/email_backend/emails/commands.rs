@@ -6,7 +6,6 @@ use crate::email_backend::sync::SyncEngine;
 use email::backend::BackendBuilder;
 use email::imap::ImapContextBuilder;
 use email::smtp::SmtpContextBuilder;
-use email::message::get::GetMessages;
 use email::message::send::SendMessage;
 use email::envelope::Id;
 use email::flag::add::AddFlags;

@@ -3,7 +3,7 @@ use crate::email_backend::emails::commands::{get_emails, get_folders, refresh_fo
 use crate::email_backend::enrichment::commands::{get_sender_info, get_domain_info, get_emails_by_sender};
 use crate::email_backend::llm::commands::get_available_models;
 use crate::db::settings::{get_settings, update_setting};
-use crate::email_backend::sync::SyncEngine;
+use crate::email_backend::sync::{SyncEngine, SyncWorker};
 use crate::db::setup::setup_database;
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
@@ -80,6 +80,11 @@ pub fn run() {
             
             tauri::async_runtime::spawn(async move {
                 sync_engine.start().await;
+            });
+
+            let sync_worker = SyncWorker::new(handle.clone());
+            tauri::async_runtime::spawn(async move {
+                sync_worker.start().await;
             });
 
             Ok(())

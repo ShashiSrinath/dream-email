@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::num::NonZeroU32;
 use tauri::{Manager, Emitter};
 use crate::email_backend::accounts::manager::{AccountManager, Account};
-use crate::email_backend::accounts::google::GoogleAccount;
 use tokio::time::sleep;
 use tokio::sync::{oneshot, Mutex};
 use log::{info, error};
@@ -13,7 +12,6 @@ use email::backend::context::BackendContextBuilder;
 use email::backend::BackendBuilder;
 use email::folder::list::ListFolders;
 use email::envelope::Envelopes;
-use email::message::get::GetMessages;
 use imap_client::tasks::tasks::select::SelectDataUnvalidated;
 use sqlx::SqlitePool;
 
@@ -111,50 +109,6 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 sleep(Duration::from_secs(300)).await;
                 if let Err(e) = Self::sync_all_accounts(&app_handle_periodic).await {
                     error!("Error during periodic sync: {}", e);
-                }
-            }
-        });
-
-        // Start background indexing
-        let app_handle_indexing = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                sleep(Duration::from_secs(60)).await;
-                if let Err(e) = Self::index_pending_emails(&app_handle_indexing).await {
-                    error!("Error during background indexing: {}", e);
-                }
-            }
-        });
-
-        // Start background thread resolution
-        let app_handle_threading = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                let pool = app_handle_threading.state::<SqlitePool>();
-                let backlog_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM emails WHERE thread_id = message_id AND normalized_subject IS NOT NULL AND normalized_subject != ''")
-                    .fetch_one(&*pool)
-                    .await
-                    .unwrap_or(0);
-                
-                // If we have a large backlog, run more aggressively
-                let sleep_time = if backlog_count > 1000 { 5 } else { 30 };
-                let batch_size = if backlog_count > 1000 { 2000 } else { 100 };
-
-                if let Err(e) = Self::resolve_threads(&app_handle_threading, batch_size).await {
-                    error!("Error during background threading: {}", e);
-                }
-                sleep(Duration::from_secs(sleep_time)).await;
-            }
-        });
-
-        // Start background identity enrichment
-        let app_handle_enrichment = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                // Run enrichment every 2 minutes
-                sleep(Duration::from_secs(120)).await;
-                if let Err(e) = crate::email_backend::enrichment::commands::proactive_enrichment(&app_handle_enrichment).await {
-                    error!("Error during background enrichment: {}", e);
                 }
             }
         });
@@ -523,99 +477,6 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         Ok(())
     }
 
-    async fn resolve_threads(app_handle: &tauri::AppHandle<R>, limit: i64) -> Result<(), String> {
-        let pool = app_handle.state::<SqlitePool>();
-        
-        // 1. Link by in_reply_to (High confidence)
-        let unlinked_replies: Vec<(i64, String, String)> = sqlx::query_as(
-            "SELECT id, message_id, in_reply_to FROM emails 
-             WHERE in_reply_to IS NOT NULL AND thread_id = message_id 
-             LIMIT ?"
-        )
-        .bind(limit)
-        .fetch_all(&*pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        for (id, _message_id, in_reply_to) in unlinked_replies {
-            let parent: Option<(String,)> = sqlx::query_as(
-                "SELECT thread_id FROM emails WHERE message_id = ? LIMIT 1"
-            )
-            .bind(&in_reply_to)
-            .fetch_optional(&*pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-            if let Some((parent_thread_id,)) = parent {
-                sqlx::query("UPDATE emails SET thread_id = ? WHERE id = ?")
-                    .bind(parent_thread_id)
-                    .bind(id)
-                    .execute(&*pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-
-        // 2. Link by references_header (High confidence)
-        let unlinked_refs: Vec<(i64, String, String)> = sqlx::query_as(
-            "SELECT id, message_id, references_header FROM emails 
-             WHERE references_header IS NOT NULL AND thread_id = message_id 
-             LIMIT ?"
-        )
-        .bind(limit)
-        .fetch_all(&*pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        for (id, _message_id, refs) in unlinked_refs {
-            let ref_ids: Vec<&str> = refs.split(|c| c == ' ' || c == ',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-            for ref_id in ref_ids.iter().rev() {
-                let parent: Option<(String,)> = sqlx::query_as(
-                    "SELECT thread_id FROM emails WHERE message_id = ? LIMIT 1"
-                )
-                .bind(ref_id)
-                .fetch_optional(&*pool)
-                .await
-                .map_err(|e| e.to_string())?;
-
-                if let Some((parent_thread_id,)) = parent {
-                    sqlx::query("UPDATE emails SET thread_id = ? WHERE id = ?")
-                        .bind(parent_thread_id)
-                        .bind(id)
-                        .execute(&*pool)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    break;
-                }
-            }
-        }
-
-        // 3. Heuristic Bulk Threading (Subject + Sender + Recipient) as fallback
-        // This sets the thread_id to the earliest message_id in the group
-        let _ = sqlx::query(
-            "UPDATE emails 
-             SET thread_id = (
-                SELECT MIN(e2.message_id) 
-                FROM emails e2 
-                WHERE e2.account_id = emails.account_id 
-                  AND e2.sender_address = emails.sender_address 
-                  AND COALESCE(e2.recipient_to, '') = COALESCE(emails.recipient_to, '')
-                  AND e2.normalized_subject = emails.normalized_subject
-                  AND e2.normalized_subject IS NOT NULL 
-                  AND e2.normalized_subject != ''
-             )
-             WHERE thread_id = message_id 
-               AND normalized_subject IS NOT NULL 
-               AND normalized_subject != ''
-               AND id IN (SELECT id FROM emails WHERE thread_id = message_id LIMIT ?)"
-        )
-        .bind(limit)
-        .execute(&*pool)
-        .await;
-        
-        Ok(())
-    }
-
     pub async fn sync_all_accounts(app_handle: &tauri::AppHandle<R>) -> Result<(), String> {
         let manager = AccountManager::new(app_handle).await?;
         let registry = manager.load().await?;
@@ -642,7 +503,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         Ok(())
     }
 
-    async fn sync_google_account(app_handle: &tauri::AppHandle<R>, google: &GoogleAccount) -> Result<(), String> {
+    async fn sync_google_account(app_handle: &tauri::AppHandle<R>, google: &crate::email_backend::accounts::google::GoogleAccount) -> Result<(), String> {
         info!("Syncing Google account: {}", google.email);
         let account = Account::Google(google.clone());
         let (account_config, imap_config, _) = account.get_configs()?;
@@ -677,97 +538,6 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 e.to_string()
             })?;
             Self::sync_folder(app_handle, &mut *client, &account, &folder.name, role, &folder_data).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn index_pending_emails(app_handle: &tauri::AppHandle<R>) -> Result<(), String> {
-        let pool = app_handle.state::<SqlitePool>();
-        
-        // Find a batch of emails missing body content, prioritized by date
-        let pending_emails: Vec<(i64, i64, String, String)> = sqlx::query_as(
-            "SELECT e.id, e.account_id, e.remote_id, f.path 
-             FROM emails e 
-             JOIN folders f ON e.folder_id = f.id 
-             WHERE e.body_text IS NULL AND f.role != 'trash' AND f.role != 'spam'
-             ORDER BY e.date DESC LIMIT 20"
-        )
-        .fetch_all(&*pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        if pending_emails.is_empty() {
-            return Ok(());
-        }
-
-        info!("Background indexing {} emails...", pending_emails.len());
-
-        let manager = AccountManager::new(app_handle).await?;
-        
-        // Group by account to reuse connections
-        let mut by_account: HashMap<i64, Vec<(i64, String, String)>> = HashMap::new();
-        for (id, account_id, remote_id, folder_path) in pending_emails {
-            by_account.entry(account_id).or_default().push((id, remote_id, folder_path));
-        }
-
-        for (account_id, emails) in by_account {
-            let account = match manager.get_account_by_id(account_id).await {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
-
-            let (account_config, imap_config, _) = account.get_configs()?;
-            let backend_builder = BackendBuilder::new(
-                account_config.clone(),
-                ImapContextBuilder::new(account_config, imap_config),
-            );
-
-            let backend = match backend_builder.build().await {
-                Ok(b) => b,
-                Err(e) => {
-                    error!("Failed to build backend for account {}: {}", account_id, e);
-                    continue;
-                }
-            };
-
-            use tokio::sync::MutexGuard;
-            let mut client: MutexGuard<ImapClient> = backend.context.client().await;
-
-            for (email_id, remote_id, _folder_path) in emails {
-                let id = email::envelope::Id::single(remote_id);
-                use imap_client::imap_next::imap_types::sequence::Sequence;
-                let uids = id.iter().filter_map(|id| Sequence::try_from(id.to_string().as_str()).ok()).collect::<Vec<_>>().try_into().unwrap();
-                
-                match client.fetch_messages(uids).await {
-                    Ok(messages) => {
-                        if let Some(message) = messages.first() {
-                            if let Ok(parsed) = message.parsed() {
-                                let body_text: Option<String> = parsed.body_text(0).map(|b| b.to_string());
-                                let body_html: Option<String> = parsed.body_html(0).map(|b| b.to_string());
-                                let snippet = body_text.as_ref().map(|t: &String| {
-                                    let s = t.chars().take(200).collect::<String>();
-                                    s.replace('\n', " ").replace('\r', "")
-                                });
-
-                                sqlx::query("UPDATE emails SET body_text = ?, body_html = ?, snippet = ? WHERE id = ?")
-                                    .bind(body_text)
-                                    .bind(body_html)
-                                    .bind(snippet)
-                                    .bind(email_id)
-                                    .execute(&*pool)
-                                    .await
-                                    .map_err(|e| e.to_string())?;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to fetch message {} for indexing: {}", email_id, e);
-                    }
-                }
-                // Small sleep to be nice to the server
-                sleep(Duration::from_millis(100)).await;
-            }
         }
 
         Ok(())
