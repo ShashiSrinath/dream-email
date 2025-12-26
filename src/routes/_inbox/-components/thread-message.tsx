@@ -18,12 +18,24 @@ import { SenderAvatar } from "@/components/sender-avatar";
 import { cn } from "@/lib/utils";
 import { AttachmentsList } from "./attachments-list";
 import { EmailBody } from "./email-body";
+import { ToolbarActions } from "./toolbar-actions";
 
 export function ThreadMessage({
   email: initialEmail,
   defaultExpanded,
-}: { email: Email;
+  onArchive,
+  onDelete,
+  onMarkAsRead,
+  onMoveToInbox,
+  showMoveToInbox,
+}: {
+  email: Email;
   defaultExpanded: boolean;
+  onArchive?: () => void;
+  onDelete?: () => void;
+  onMarkAsRead?: () => void;
+  onMoveToInbox?: () => void;
+  showMoveToInbox?: boolean;
 }) {
   const [email, setEmail] = useState(initialEmail);
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
@@ -164,7 +176,17 @@ export function ThreadMessage({
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {isExpanded && (
-              <div className="flex items-center gap-2 mr-2">
+              <>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <ToolbarActions
+                    onArchive={onArchive}
+                    onDelete={onDelete}
+                    onMarkAsRead={onMarkAsRead}
+                    onMoveToInbox={onMoveToInbox}
+                    showMoveToInbox={showMoveToInbox}
+                  />
+                </div>
+                <div className="flex items-center gap-2 mr-2">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -208,6 +230,7 @@ export function ThreadMessage({
                   <span>Forward</span>
                 </Button>
               </div>
+            </>
             )}
             <span className="text-xs font-medium text-muted-foreground mr-2">
               {format(new Date(email.date), "MMM d, p")}

@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { useEmailStore, Email } from "@/lib/store";
 import { SenderSidebar } from "./-components/sender-sidebar";
 import { ThreadMessage } from "./-components/thread-message";
-import { ToolbarActions } from "./-components/toolbar-actions";
 
 export const Route = createFileRoute("/_inbox/email/$emailId")({
   loader: async ({ params: { emailId } }) => {
@@ -108,16 +107,6 @@ export function ThreadView() {
               {displaySubject}
             </h2>
           </div>
-          <div className="shrink-0">
-            <ToolbarActions 
-              onArchive={() => archiveEmails([email.id])}
-              onDelete={() => moveToTrash([email.id])}
-              onMarkAsRead={() => markAsRead([email.id])}
-              onLabel={() => console.log("Label", email.id)}
-              onMoveToInbox={() => moveToInbox([email.id])}
-              showMoveToInbox={view === "spam" || view === "trash"}
-            />
-          </div>
         </div>
 
         <ScrollArea className="flex-1 min-h-0 bg-email-view">
@@ -127,6 +116,11 @@ export function ThreadView() {
                 key={msg.id}
                 email={msg}
                 defaultExpanded={index === 0}
+                onArchive={() => archiveEmails([msg.id])}
+                onDelete={() => moveToTrash([msg.id])}
+                onMarkAsRead={() => markAsRead([msg.id])}
+                onMoveToInbox={() => moveToInbox([msg.id])}
+                showMoveToInbox={view === "spam" || view === "trash"}
               />
             ))}
 
