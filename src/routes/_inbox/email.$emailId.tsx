@@ -229,12 +229,11 @@ function ThreadMessage({
           <div className="flex items-center gap-2 shrink-0">
             {isExpanded && (
               <div className="flex items-center gap-1 mr-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-foreground/70 hover:text-primary hover:bg-primary/10 transition-colors"
+                                    onClick={(e) => {                    e.stopPropagation();
                     useEmailStore.getState().setComposer({
                       open: true,
                       defaultTo: email.sender_address,
@@ -247,12 +246,11 @@ function ThreadMessage({
                 >
                   <Reply className="w-4 h-4" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-foreground/70 hover:text-primary hover:bg-primary/10 transition-colors"
+                                    onClick={(e) => {                    e.stopPropagation();
                     useEmailStore.getState().setComposer({
                       open: true,
                       defaultTo: "",
@@ -316,8 +314,8 @@ ${email.snippet || ""}`,
                 
                 <div className="flex gap-3 pt-8 border-t">
                   <Button 
-                    variant="outline" 
-                    className="rounded-full px-6"
+                    variant="secondary" 
+                    className="rounded-full px-8 font-semibold text-primary hover:bg-primary/10 transition-all"
                     onClick={() => {
                       useEmailStore.getState().setComposer({
                         open: true,
@@ -333,8 +331,8 @@ ${email.snippet || ""}`,
                     Reply
                   </Button>
                   <Button 
-                    variant="outline" 
-                    className="rounded-full px-6"
+                    variant="secondary" 
+                    className="rounded-full px-8 font-semibold text-primary hover:bg-primary/10 transition-all"
                     onClick={() => {
                       useEmailStore.getState().setComposer({
                         open: true,
