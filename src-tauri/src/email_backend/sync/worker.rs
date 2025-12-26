@@ -143,6 +143,30 @@ impl<R: tauri::Runtime> SyncWorker<R> {
         Ok(())
     }
 
+    pub async fn summarize_specific_email(app_handle: &tauri::AppHandle<R>, email_id: i64) -> Result<(), String> {
+        let pool = app_handle.state::<SqlitePool>();
+        let body_text: Option<String> = sqlx::query_scalar("SELECT body_text FROM emails WHERE id = ?")
+            .bind(email_id)
+            .fetch_one(&*pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if let Some(text) = body_text {
+            match crate::email_backend::llm::summarization::summarize_email_with_ai(app_handle, email_id, &text).await {
+                Ok(summary) => {
+                    let _ = sqlx::query("UPDATE emails SET summary = ? WHERE id = ?")
+                        .bind(summary)
+                        .bind(email_id)
+                        .execute(&*pool)
+                        .await;
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err("No body text found for summarization".to_string())
+    }
+
     async fn index_pending_emails(app_handle: &tauri::AppHandle<R>) -> Result<(), String> {
         let pool = app_handle.state::<SqlitePool>();
         
@@ -183,42 +207,7 @@ impl<R: tauri::Runtime> SyncWorker<R> {
                 match backend.get_messages(&folder_path, &uids).await {
                     Ok(messages) => {
                         for message in messages.to_vec() {
-                            // Save attachments if any
-                            if let Ok(attachments) = message.attachments() {
-                                for att in attachments {
-                                    let _ = sqlx::query(
-                                        "INSERT INTO attachments (email_id, filename, mime_type, size, data)
-                                         VALUES (?, ?, ?, ?, ?)"
-                                    )
-                                    .bind(email_id)
-                                    .bind(&att.filename)
-                                    .bind(&att.mime)
-                                    .bind(att.body.len() as i64)
-                                    .bind(&att.body)
-                                    .execute(&*pool)
-                                    .await
-                                    .map_err(|e| error!("Failed to save attachment for email {}: {}", email_id, e));
-                                }
-                            }
-
-                            if let Ok(parsed) = message.parsed() {
-                                let parsed: &mail_parser::Message = parsed;
-                                let body_text: Option<String> = parsed.body_text(0).map(|b| b.to_string());
-                                let body_html: Option<String> = parsed.body_html(0).map(|b| b.to_string());
-                                let snippet = body_text.as_ref().map(|t: &String| {
-                                    let s = t.chars().take(200).collect::<String>();
-                                    s.replace('\n', " ").replace('\r', "")
-                                });
-
-                                let _ = sqlx::query("UPDATE emails SET body_text = ?, body_html = ?, snippet = ? WHERE id = ?")
-                                    .bind(body_text)
-                                    .bind(body_html)
-                                    .bind(snippet)
-                                    .bind(email_id)
-                                    .execute(&*pool)
-                                    .await
-                                    .map_err(|e| e.to_string());
-                            }
+                            Self::save_message_parts(app_handle, email_id, message).await?;
                         }
                     }
                     Err(e) => {
@@ -229,6 +218,78 @@ impl<R: tauri::Runtime> SyncWorker<R> {
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn index_specific_email(app_handle: &tauri::AppHandle<R>, email_id: i64) -> Result<(), String> {
+        let pool = app_handle.state::<SqlitePool>();
+        let email_info: Option<(i64, String, String)> = sqlx::query_as(
+            "SELECT e.account_id, e.remote_id, f.path 
+             FROM emails e 
+             JOIN folders f ON e.folder_id = f.id 
+             WHERE e.id = ?"
+        )
+        .bind(email_id)
+        .fetch_optional(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some((account_id, remote_id, folder_path)) = email_info {
+            let engine = app_handle.state::<SyncEngine<R>>();
+            let backend = engine.get_backend(account_id).await?;
+            let uids = Id::single(remote_id.clone());
+            
+            match backend.get_messages(&folder_path, &uids).await {
+                Ok(messages) => {
+                    for message in messages.to_vec() {
+                        Self::save_message_parts(app_handle, email_id, message).await?;
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(())
+    }
+
+    async fn save_message_parts(app_handle: &tauri::AppHandle<R>, email_id: i64, message: &email::message::Message<'_>) -> Result<(), String> {
+        let pool = app_handle.state::<SqlitePool>();
+        
+        // Save attachments if any
+        if let Ok(attachments) = message.attachments() {
+            for att in attachments {
+                let _ = sqlx::query(
+                    "INSERT INTO attachments (email_id, filename, mime_type, size, data)
+                     VALUES (?, ?, ?, ?, ?)"
+                )
+                .bind(email_id)
+                .bind(&att.filename)
+                .bind(&att.mime)
+                .bind(att.body.len() as i64)
+                .bind(&att.body)
+                .execute(&*pool)
+                .await
+                .map_err(|e| error!("Failed to save attachment for email {}: {}", email_id, e));
+            }
+        }
+
+        if let Ok(parsed) = message.parsed() {
+            let parsed: &mail_parser::Message = parsed;
+            let body_text: Option<String> = parsed.body_text(0).map(|b| b.to_string());
+            let body_html: Option<String> = parsed.body_html(0).map(|b| b.to_string());
+            let snippet = body_text.as_ref().map(|t: &String| {
+                let s = t.chars().take(200).collect::<String>();
+                s.replace('\n', " ").replace('\r', "")
+            });
+
+            let _ = sqlx::query("UPDATE emails SET body_text = ?, body_html = ?, snippet = ? WHERE id = ?")
+                .bind(body_text)
+                .bind(body_html)
+                .bind(snippet)
+                .bind(email_id)
+                .execute(&*pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 

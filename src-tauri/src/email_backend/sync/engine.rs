@@ -89,13 +89,13 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 if err_str.contains("auth") || err_str.contains("Unauthorized") || err_str.contains("token") || err_str.contains("credentials") {
                     info!("Refreshing token for account {} due to context build error: {}", account.email(), err_str);
                     manager.refresh_access_token(account.email()).await?;
-                    
+
                     // Reload account and configs
                     let account = manager.get_account_by_id(account_id).await?;
                     let (account_config, imap_config, _) = account.get_configs()?;
                     let ctx_builder = ImapContextBuilder::new(account_config, imap_config)
                         .with_pool_size(2);
-                    
+
                     BackendContextBuilder::build(ctx_builder)
                         .await
                         .map_err(|e| e.to_string())?
@@ -223,6 +223,81 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         Ok(())
     }
 
+    async fn is_ai_summary_enabled(app_handle: &tauri::AppHandle<R>) -> bool {
+        let pool = app_handle.state::<SqlitePool>();
+        let ai_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiEnabled'")
+            .fetch_one(&*pool)
+            .await
+            .unwrap_or(("false".to_string(),));
+
+        let ai_summarization_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiSummarizationEnabled'")
+            .fetch_one(&*pool)
+            .await
+            .unwrap_or(("false".to_string(),));
+
+        ai_enabled.0 == "true" && ai_summarization_enabled.0 == "true"
+    }
+
+    async fn handle_notification(
+        app_handle: tauri::AppHandle<R>,
+        email_id: i64,
+        subject: String,
+        sender: String,
+    ) {
+        if !Self::is_ai_summary_enabled(&app_handle).await {
+            let _ = app_handle.notification()
+                .builder()
+                .title(format!("New Email: {}", subject))
+                .body(format!("From: {}", sender))
+                .show();
+            return;
+        }
+
+        // AI Summary enabled, try to get it within 10 seconds
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(10);
+
+        // Trigger indexing and summarization immediately for this email
+        let app_handle_worker = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            use crate::email_backend::sync::worker::SyncWorker;
+            if let Err(e) = SyncWorker::index_specific_email(&app_handle_worker, email_id).await {
+                error!("Failed to index email {} for notification: {}", email_id, e);
+                return;
+            }
+            if let Err(e) = SyncWorker::summarize_specific_email(&app_handle_worker, email_id).await {
+                error!("Failed to summarize email {} for notification: {}", email_id, e);
+            }
+        });
+
+        while start.elapsed() < timeout {
+             let pool = app_handle.state::<SqlitePool>();
+             let summary: Option<Option<String>> = sqlx::query_scalar("SELECT summary FROM emails WHERE id = ?")
+                 .bind(email_id)
+                 .fetch_optional(&*pool)
+                 .await
+                 .unwrap_or(None);
+
+             if let Some(Some(s)) = summary {
+                 let _ = app_handle.notification()
+                     .builder()
+                     .title(format!("New Email: {}", subject))
+                     .body(format!("{}", s))
+                     .show();
+                 return;
+             }
+
+             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        // Timeout reached, send default notification
+        let _ = app_handle.notification()
+            .builder()
+            .title(format!("New Email: {}", subject))
+            .body(format!("From: {}", sender))
+            .show();
+    }
+
     async fn save_envelopes(
         app_handle: &tauri::AppHandle<R>,
         account_id: i64,
@@ -242,13 +317,14 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             let norm_subject = normalize_subject(&env.subject);
             let recipient_to = Some(env.to.addr.clone());
 
-            let res = sqlx::query(
+            let res: Result<(i64,), sqlx::Error> = sqlx::query_as(
                 "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, in_reply_to, references_header, subject, normalized_subject, sender_name, sender_address, recipient_to, date, flags, has_attachments)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(folder_id, remote_id) DO UPDATE SET
                     flags=excluded.flags,
                     recipient_to=COALESCE(emails.recipient_to, excluded.recipient_to),
-                    has_attachments=excluded.has_attachments"
+                    has_attachments=excluded.has_attachments
+                 RETURNING id"
             )
             .bind(account_id)
             .bind(folder_id)
@@ -265,19 +341,21 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             .bind(&date_str)
             .bind(serde_json::to_string(&flags).unwrap_or_default())
             .bind(env.has_attachment)
-            .execute(&*pool)
+            .fetch_one(&*pool)
             .await;
 
             match res {
-                Ok(r) => {
+                Ok((email_id,)) => {
                     success_count += 1;
-                    if notify && r.rows_affected() > 0 && !flags.contains(&"seen".to_string()) {
-                        info!("Sending notification for new email: {}", env.subject);
-                        let _ = app_handle.notification()
-                            .builder()
-                            .title(format!("New Email: {}", env.subject))
-                            .body(format!("From: {}", env.from.name.as_deref().unwrap_or(&env.from.addr)))
-                            .show();
+                    if notify && !flags.contains(&"seen".to_string()) {
+                        info!("Scheduling notification for email: {}", env.subject);
+                        let app_handle_clone = app_handle.clone();
+                        let subject = env.subject.clone();
+                        let sender = env.from.name.as_deref().unwrap_or(&env.from.addr).to_string();
+
+                        tauri::async_runtime::spawn(async move {
+                            Self::handle_notification(app_handle_clone, email_id, subject, sender).await;
+                        });
                     }
                 }
                 Err(e) => {
@@ -453,7 +531,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             info!("Performing full sync for folder {} of {} (total={})", folder_name, account.email(), total_count);
             let mut end = total_count as u32;
             let mut synced_count = 0;
-            
+
             while end > 0 {
                 if dev_mode && synced_count >= MAX_SYNC_MESSAGES_PER_FOLDER {
                     info!("Hard limit of {} reached for folder {} in DevMode. Stopping sync.", MAX_SYNC_MESSAGES_PER_FOLDER, folder_name);
@@ -485,7 +563,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                     error!("Critical failure saving envelopes for {}: {}. Aborting folder sync.", folder_name, e);
                     return Err(e);
                 }
-                
+
                 synced_count += batch_len;
                 let _ = app_handle.emit("emails-updated", account_id);
 
@@ -613,7 +691,7 @@ mod tests {
     #[tokio::test]
     async fn test_save_envelopes_saves_has_attachments() {
         let pool = setup_test_db().await;
-        
+
         let row: (i64,) = sqlx::query_as("INSERT INTO accounts (email, account_type) VALUES (?, ?) RETURNING id")
             .bind("test@example.com")
             .bind("google")
