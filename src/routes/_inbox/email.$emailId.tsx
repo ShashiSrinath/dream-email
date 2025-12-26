@@ -182,17 +182,19 @@ function ThreadMessage({
 
     return (
 
-      <div
+          <div
 
-        className={cn(
+            className={cn(
 
-          "bg-card text-card-foreground border rounded-xl transition-all flex flex-col shadow-sm relative",
+              "bg-card text-card-foreground border rounded-xl transition-all flex flex-col shadow-sm relative",
 
-          isExpanded ? "ring-1 ring-primary/5 shadow-md" : "hover:bg-accent/50",
+              isExpanded ? "ring-1 ring-primary/5 shadow-md" : "hover:bg-accent/50",
 
-        )}
+            )}
 
-      >
+            style={{ clipPath: "inset(0 round var(--radius-xl))" }}
+
+          >
 
         {/* Header */}
 
