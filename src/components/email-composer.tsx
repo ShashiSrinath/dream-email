@@ -59,6 +59,24 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+const PenLine = ({ className }: { className?: string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+  </svg>
+);
+
 const emailSchema = z.object({
   accountId: z.number().min(1, "Select an account"),
   to: z.string().min(1, "Recipient is required"),
@@ -88,26 +106,20 @@ const MenuBar = ({ editor, isCodeView, setIsCodeView }: { editor: any, isCodeVie
 
   const mainButtons = [
     {
-      icon: <Type className="w-4 h-4" />,
-      title: "Clean Formatting",
-      action: () => editor.chain().focus().unsetAllMarks().clearNodes().run(),
-    },
-    { type: "separator" },
-    {
       icon: <Bold className="w-4 h-4" />,
-      title: "Bold (Ctrl+B)",
+      title: "Bold",
       action: () => editor.chain().focus().toggleBold().run(),
       isActive: () => editor.isActive('bold'),
     },
     {
       icon: <Italic className="w-4 h-4" />,
-      title: "Italic (Ctrl+I)",
+      title: "Italic",
       action: () => editor.chain().focus().toggleItalic().run(),
       isActive: () => editor.isActive('italic'),
     },
     {
       icon: <UnderlineIcon className="w-4 h-4" />,
-      title: "Underline (Ctrl+U)",
+      title: "Underline",
       action: () => editor.chain().focus().toggleUnderline().run(),
       isActive: () => editor.isActive('underline'),
     },
@@ -116,13 +128,6 @@ const MenuBar = ({ editor, isCodeView, setIsCodeView }: { editor: any, isCodeVie
       title: "Strikethrough",
       action: () => editor.chain().focus().toggleStrike().run(),
       isActive: () => editor.isActive('strike'),
-    },
-    { type: "separator" },
-    {
-      icon: <LinkIcon className="w-4 h-4" />,
-      title: "Insert Link",
-      action: setLink,
-      isActive: () => editor.isActive('link'),
     },
     { type: "separator" },
     {
@@ -137,33 +142,27 @@ const MenuBar = ({ editor, isCodeView, setIsCodeView }: { editor: any, isCodeVie
       action: () => editor.chain().focus().toggleOrderedList().run(),
       isActive: () => editor.isActive('orderedList'),
     },
+    { type: "separator" },
     {
       icon: <Quote className="w-4 h-4" />,
       title: "Blockquote",
       action: () => editor.chain().focus().toggleBlockquote().run(),
       isActive: () => editor.isActive('blockquote'),
     },
-  ];
-
-  const historyButtons = [
     {
-      icon: <Undo className="w-4 h-4" />,
-      title: "Undo",
-      action: () => editor.chain().focus().undo().run(),
-    },
-    {
-      icon: <Redo className="w-4 h-4" />,
-      title: "Redo",
-      action: () => editor.chain().focus().redo().run(),
+      icon: <LinkIcon className="w-4 h-4" />,
+      title: "Insert Link",
+      action: setLink,
+      isActive: () => editor.isActive('link'),
     },
   ];
 
   return (
-    <div className="flex items-center justify-between p-2 border-t bg-background shrink-0">
-      <div className="flex items-center gap-0.5">
+    <div className="flex items-center justify-between px-3 py-1.5 border-t bg-muted/5 shadow-[0_-1px_0_0_rgba(0,0,0,0.02)] shrink-0">
+      <div className="flex items-center gap-1">
         {mainButtons.map((btn, i) => (
           btn.type === "separator" ? (
-            <div key={i} className="w-px h-4 bg-border mx-1" />
+            <div key={i} className="w-px h-4 bg-border/60 mx-1" />
           ) : (
             <Tooltip key={i}>
               <TooltipTrigger asChild>
@@ -172,8 +171,10 @@ const MenuBar = ({ editor, isCodeView, setIsCodeView }: { editor: any, isCodeVie
                   variant="ghost"
                   size="icon"
                   className={cn(
-                    "w-8 h-8",
-                    btn.isActive?.() ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
+                    "w-8 h-8 rounded-lg transition-all duration-200",
+                    btn.isActive?.() 
+                      ? "bg-primary/10 text-primary hover:bg-primary/20" 
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   )}
                   onClick={btn.action}
                   disabled={isCodeView}
@@ -181,47 +182,67 @@ const MenuBar = ({ editor, isCodeView, setIsCodeView }: { editor: any, isCodeVie
                   {btn.icon}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{btn.title}</TooltipContent>
+              <TooltipContent side="top" className="text-[10px] font-bold uppercase tracking-wider">{btn.title}</TooltipContent>
             </Tooltip>
           )
         ))}
       </div>
 
-      <div className="flex items-center gap-0.5">
+      <div className="flex items-center gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className={cn("w-8 h-8", isCodeView ? "bg-primary/10 text-primary" : "text-muted-foreground")}
+              className={cn(
+                "w-8 h-8 rounded-lg transition-all duration-200", 
+                isCodeView ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              )}
               onClick={() => setIsCodeView(!isCodeView)}
             >
               {isCodeView ? <Eye className="w-4 h-4" /> : <Code className="w-4 h-4" />}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{isCodeView ? "Show Preview" : "Show Source Code"}</TooltipContent>
+          <TooltipContent side="top" className="text-[10px] font-bold uppercase tracking-wider">
+            {isCodeView ? "Show Preview" : "Show Source"}
+          </TooltipContent>
         </Tooltip>
 
-        <div className="w-px h-4 bg-border mx-1" />
+        <div className="w-px h-4 bg-border/60 mx-1" />
 
-        {historyButtons.map((btn, i) => (
-          <Tooltip key={i}>
+        <div className="flex items-center gap-1">
+          <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="w-8 h-8 text-muted-foreground hover:text-foreground"
-                onClick={btn.action}
+                className="w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200"
+                onClick={() => editor.chain().focus().undo().run()}
                 disabled={isCodeView}
               >
-                {btn.icon}
+                <Undo className="w-4 h-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{btn.title}</TooltipContent>
+            <TooltipContent side="top" className="text-[10px] font-bold uppercase tracking-wider">Undo</TooltipContent>
           </Tooltip>
-        ))}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200"
+                onClick={() => editor.chain().focus().redo().run()}
+                disabled={isCodeView}
+              >
+                <Redo className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-[10px] font-bold uppercase tracking-wider">Redo</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
     </div>
   );
@@ -292,7 +313,7 @@ export function EmailComposer({
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-base focus:outline-none max-w-none p-8 min-h-[400px]',
+        class: 'prose prose-sm sm:prose-base focus:outline-none max-w-none px-12 py-10 min-h-[450px] font-sans selection:bg-primary/20',
       },
     },
   });
@@ -429,38 +450,38 @@ export function EmailComposer({
       <DialogContent 
         showCloseButton={false}
         className={cn(
-            "flex flex-col p-0 gap-0 overflow-hidden transition-all duration-300 ease-in-out border-none",
-            isMaximized ? "max-w-none w-screen h-screen rounded-none" : "sm:max-w-[900px] h-[800px] rounded-2xl shadow-2xl"
+            "flex flex-col p-0 gap-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] border-none shadow-2xl",
+            isMaximized ? "max-w-none w-screen h-screen rounded-none" : "sm:max-w-[950px] h-[850px] rounded-[24px]"
         )}
       >
-        <DialogHeader className="px-6 py-4 border-b flex flex-row items-center justify-between space-y-0 bg-muted/20 backdrop-blur-md shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                <PenLine className="w-4 h-4" />
+        <DialogHeader className="px-12 py-6 border-b flex flex-row items-center justify-between space-y-0 bg-background shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-sm">
+                <PenLine className="w-5 h-5" />
             </div>
             <div>
-                <DialogTitle className="text-sm font-bold tracking-tight">
+                <DialogTitle className="text-[17px] font-bold tracking-tight text-foreground/90">
                 {formData.subject || "New Message"}
                 </DialogTitle>
                 <div className="flex items-center gap-2 mt-0.5">
                     {isSaved ? (
-                        <span className="text-[9px] text-muted-foreground flex items-center gap-1 uppercase tracking-widest font-black">
-                            <div className="w-1 h-1 rounded-full bg-green-500" />
+                        <div className="text-[10px] text-muted-foreground/60 flex items-center gap-1.5 uppercase tracking-[0.1em] font-bold">
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]" />
                             Saved to drafts
-                        </span>
+                        </div>
                     ) : (
-                        <span className="text-[9px] text-muted-foreground uppercase tracking-widest font-black italic opacity-50">
+                        <div className="text-[10px] text-muted-foreground/40 uppercase tracking-[0.1em] font-bold animate-pulse">
                             Editing...
-                        </span>
+                        </div>
                     )}
                 </div>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-full transition-colors"
+              className="h-9 w-9 text-muted-foreground/70 hover:text-foreground hover:bg-muted rounded-xl transition-all duration-200"
               onClick={() => setIsMaximized(!isMaximized)}
             >
               {isMaximized ? <Minimize2 className="h-4.5 w-4.5" /> : <Maximize2 className="h-4.5 w-4.5" />}
@@ -468,7 +489,7 @@ export function EmailComposer({
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-full transition-colors"
+              className="h-9 w-9 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/5 rounded-xl transition-all duration-200"
               onClick={handleClose}
             >
               <X className="h-4.5 w-4.5" />
@@ -477,10 +498,10 @@ export function EmailComposer({
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSend)} className="flex flex-col flex-1 min-h-0 bg-background">
-          <div className="flex flex-col border-b divide-y shrink-0 px-2">
+          <div className="flex flex-col border-b divide-y divide-border/40 shrink-0 px-1">
             {/* From */}
-            <div className="flex items-center px-4 py-2.5 group">
-              <Label className="w-16 text-[11px] font-black uppercase tracking-widest text-muted-foreground/70">From</Label>
+            <div className="flex items-center px-12 py-2 gap-4 group transition-colors hover:bg-muted/30">
+              <Label className="w-16 text-[11px] font-medium uppercase tracking-wider text-foreground/50">From</Label>
               <Controller
                 name="accountId"
                 control={control}
@@ -489,15 +510,36 @@ export function EmailComposer({
                     onValueChange={(val) => field.onChange(parseInt(val))}
                     value={field.value.toString()}
                   >
-                    <SelectTrigger className="border-none shadow-none focus:ring-0 h-10 px-0 text-[15px] font-semibold hover:bg-transparent bg-transparent transition-all">
-                      <SelectValue />
+                    <SelectTrigger className="border-none shadow-none focus:ring-0 h-12 px-0 text-[14px] font-medium hover:bg-transparent bg-transparent transition-all">
+                      <div className="flex items-center gap-2 text-left">
+                        {accounts.find(a => a.data.id === field.value)?.data.name && (
+                          <span className="font-semibold text-foreground">
+                            {accounts.find(a => a.data.id === field.value)?.data.name}
+                          </span>
+                        )}
+                        <span className={cn(
+                          "text-muted-foreground font-normal",
+                          accounts.find(a => a.data.id === field.value)?.data.name ? "text-xs opacity-70" : "text-[14px]"
+                        )}>
+                          &lt;{accounts.find(a => a.data.id === field.value)?.data.email}&gt;
+                        </span>
+                      </div>
                     </SelectTrigger>
-                    <SelectContent className="rounded-xl border-none shadow-2xl">
+                    <SelectContent className="rounded-2xl border border-border/40 shadow-2xl p-1.5 min-w-[300px]">
                       {accounts.map(account => (
-                        <SelectItem key={account.data.id} value={account.data.id!.toString()} className="rounded-lg py-2.5">
-                          <div className="flex flex-col gap-0.5">
-                              <span className="font-bold">{account.data.email}</span>
-                              {account.data.name && <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{account.data.name}</span>}
+                        <SelectItem key={account.data.id} value={account.data.id!.toString()} className="rounded-xl py-2.5 px-3 focus:bg-primary/5 focus:text-primary transition-colors cursor-pointer">
+                          <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary shrink-0">
+                                {account.data.picture ? (
+                                  <img src={account.data.picture} className="w-full h-full rounded-full" alt="" />
+                                ) : (
+                                  account.data.email[0].toUpperCase()
+                                )}
+                              </div>
+                              <div className="flex flex-col min-w-0">
+                                  <span className="font-bold text-sm tracking-tight truncate">{account.data.name || 'No Name'}</span>
+                                  <span className="text-xs text-muted-foreground truncate">{account.data.email}</span>
+                              </div>
                           </div>
                         </SelectItem>
                       ))}
@@ -508,22 +550,22 @@ export function EmailComposer({
             </div>
 
             {/* To */}
-            <div className="flex items-center px-4 py-2.5 gap-3 relative group">
-              <Label htmlFor="to" className="w-16 text-[11px] font-black uppercase tracking-widest text-muted-foreground/70">To</Label>
+            <div className="flex items-center px-12 py-2 gap-4 relative group transition-colors hover:bg-muted/30">
+              <Label htmlFor="to" className="w-16 text-[11px] font-medium uppercase tracking-wider text-foreground/50">To</Label>
               <Input
                 id="to"
                 {...register("to")}
                 autoFocus
-                className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-10 text-[15px] font-medium placeholder:text-muted-foreground/40"
-                placeholder="Type recipient email..."
+                className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-12 text-[14px] font-medium placeholder:text-muted-foreground/30 transition-all"
+                placeholder="recipient@example.com"
               />
-              <div className="flex items-center gap-1.5 opacity-0 group-focus-within:opacity-100 transition-all duration-300 translate-x-2 group-focus-within:translate-x-0">
+              <div className="flex items-center gap-1 opacity-0 group-focus-within:opacity-100 transition-all duration-300 translate-x-2 group-focus-within:translate-x-0">
                 {!showCc && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-8 px-2.5 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-primary/5 hover:text-primary rounded-lg transition-all"
+                    className="h-7 px-2.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 hover:bg-primary/5 hover:text-primary rounded-lg transition-all"
                     onClick={() => setShowCc(true)}
                   >
                     Cc
@@ -534,25 +576,27 @@ export function EmailComposer({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-8 px-2.5 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-primary/5 hover:text-primary rounded-lg transition-all"
-                    onClick={() => setShowBcc(true)}
+                    className="h-7 px-2.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 hover:bg-primary/5 hover:text-primary rounded-lg transition-all"
+                    onClick={() => {
+                        setShowBcc(true);
+                    }}
                   >
                     Bcc
                   </Button>
                 )}
               </div>
-              {errors.to && <span className="absolute bottom-1 left-24 text-[10px] text-destructive font-bold">{errors.to.message}</span>}
+              {errors.to && <span className="absolute bottom-1 left-32 text-[9px] text-destructive font-bold uppercase tracking-tighter">{errors.to.message}</span>}
             </div>
 
             {/* Cc */}
             {showCc && (
-              <div className="flex items-center px-4 py-2.5 gap-3 group animate-in fade-in slide-in-from-top-2 duration-300">
-                <Label htmlFor="cc" className="w-16 text-[11px] font-black uppercase tracking-widest text-muted-foreground/70">Cc</Label>
+              <div className="flex items-center px-12 py-2 gap-4 group animate-in fade-in slide-in-from-top-1 duration-300 transition-colors hover:bg-muted/30">
+                <Label htmlFor="cc" className="w-16 text-[11px] font-medium uppercase tracking-wider text-foreground/50">Cc</Label>
                 <Input
                   id="cc"
                   {...register("cc")}
-                  className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-10 text-[15px] font-medium"
-                  placeholder="Carbon copy"
+                  className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-12 text-[14px] font-medium placeholder:text-muted-foreground/30"
+                  placeholder="carbon-copy@example.com"
                 />
                 <Button
                     type="button"
@@ -571,13 +615,13 @@ export function EmailComposer({
 
             {/* Bcc */}
             {showBcc && (
-              <div className="flex items-center px-4 py-2.5 gap-3 group animate-in fade-in slide-in-from-top-2 duration-300">
-                <Label htmlFor="bcc" className="w-16 text-[11px] font-black uppercase tracking-widest text-muted-foreground/70">Bcc</Label>
+              <div className="flex items-center px-12 py-2 gap-4 group animate-in fade-in slide-in-from-top-1 duration-300 transition-colors hover:bg-muted/30">
+                <Label htmlFor="bcc" className="w-16 text-[11px] font-medium uppercase tracking-wider text-foreground/50">Bcc</Label>
                 <Input
                   id="bcc"
                   {...register("bcc")}
-                  className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-10 text-[15px] font-medium"
-                  placeholder="Blind carbon copy"
+                  className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-12 text-[14px] font-medium placeholder:text-muted-foreground/30"
+                  placeholder="blind-carbon-copy@example.com"
                 />
                 <Button
                     type="button"
@@ -595,13 +639,13 @@ export function EmailComposer({
             )}
 
             {/* Subject */}
-            <div className="flex items-center px-4 py-2.5 gap-3 group">
-              <Label htmlFor="subject" className="w-16 text-[11px] font-black uppercase tracking-widest text-muted-foreground/70">Subject</Label>
+            <div className="flex items-center px-12 py-2 gap-4 group transition-colors hover:bg-muted/30">
+              <Label htmlFor="subject" className="w-16 text-[11px] font-medium uppercase tracking-wider text-foreground/50">Subject</Label>
               <Input
                 id="subject"
                 {...register("subject")}
-                className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-10 text-[16px] font-bold placeholder:text-muted-foreground/30"
-                placeholder="What is this email about?"
+                className="flex-1 border-none shadow-none focus-visible:ring-0 px-0 h-12 text-[15px] font-bold placeholder:text-muted-foreground/20 tracking-tight"
+                placeholder="What's this about?"
               />
             </div>
           </div>
@@ -609,96 +653,102 @@ export function EmailComposer({
           <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
             <div className="flex-1 overflow-y-auto custom-scrollbar">
               {isCodeView ? (
-                <div className="p-8 h-full flex flex-col">
-                  <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <Code className="w-4 h-4 text-primary" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">HTML Editor</span>
+                <div className="p-12 h-full flex flex-col">
+                  <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                          <Code className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold uppercase tracking-[0.1em] text-foreground/80 block">HTML Source</span>
+                          <span className="text-[10px] text-muted-foreground font-medium">Directly edit raw email code</span>
+                        </div>
                       </div>
-                      <span className="text-[10px] text-muted-foreground">Directly edit the raw email source</span>
                   </div>
                   <Textarea
                     {...register("body")}
-                    className="flex-1 font-mono text-sm p-6 bg-muted/10 border-primary/10 rounded-xl focus-visible:ring-primary/20 min-h-[400px] resize-none leading-relaxed"
+                    className="flex-1 font-mono text-[13px] p-8 bg-muted/20 border-border/40 rounded-2xl focus-visible:ring-primary/20 min-h-[400px] resize-none leading-relaxed shadow-inner"
                     spellCheck={false}
                   />
                 </div>
               ) : (
-                <Controller
-                  name="body"
-                  control={control}
-                  render={() => <EditorContent editor={editor} />}
-                />
+                <div className="px-0">
+                  <Controller
+                    name="body"
+                    control={control}
+                    render={() => <EditorContent editor={editor} />}
+                  />
+                </div>
               )}
             </div>
 
             <MenuBar editor={editor} isCodeView={isCodeView} setIsCodeView={setIsCodeView} />
           </div>
 
-          <div className="p-6 border-t bg-muted/10 backdrop-blur-md shrink-0">
+          <div className="px-12 py-8 border-t bg-muted/5 shrink-0">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <Button
                   type="submit"
                   size="lg"
-                  className="px-8 h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-2xl shadow-lg shadow-primary/20 transition-all active:scale-[0.98] group"
+                  className="px-10 h-14 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-[20px] shadow-xl shadow-primary/20 transition-all active:scale-[0.97] group relative overflow-hidden"
                   disabled={isSending}
                 >
                   {isSending ? (
                     <span className="flex items-center gap-3">
-                      <div className="w-4 h-4 border-3 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                       Sending...
                     </span>
                   ) : (
                     <span className="flex items-center gap-3">
-                      <Send className="w-4 h-4 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-                      Send Message
+                      <Send className="w-5 h-5 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform duration-300" />
+                      <span>Send Message</span>
                     </span>
                   )}
                 </Button>
 
-                <div className="w-px h-8 bg-border mx-2" />
+                <div className="w-px h-8 bg-border/40 mx-3" />
 
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button type="button" variant="ghost" size="icon" className="w-11 h-11 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-xl transition-all">
-                      <Paperclip className="w-5 h-5" />
+                    <Button type="button" variant="ghost" size="icon" className="w-12 h-12 text-muted-foreground/70 hover:text-primary hover:bg-primary/10 rounded-2xl transition-all duration-300">
+                      <Paperclip className="w-5.5 h-5.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Attach files</TooltipContent>
+                  <TooltipContent side="top" className="text-[10px] font-bold uppercase tracking-wider">Attach files</TooltipContent>
                 </Tooltip>
 
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button type="button" variant="ghost" size="icon" className="w-11 h-11 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-xl transition-all">
-                      <Smile className="w-5 h-5" />
+                    <Button type="button" variant="ghost" size="icon" className="w-12 h-12 text-muted-foreground/70 hover:text-primary hover:bg-primary/10 rounded-2xl transition-all duration-300">
+                      <Smile className="w-5.5 h-5.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Insert emoji</TooltipContent>
+                  <TooltipContent side="top" className="text-[10px] font-bold uppercase tracking-wider">Add emoji</TooltipContent>
                 </Tooltip>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="w-11 h-11 text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-all rounded-xl"
+                      className="w-12 h-12 text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-all duration-300 rounded-2xl"
                       onClick={() => {
                         if (draftId) invoke("delete_draft", { id: draftId });
                         onOpenChange?.(false);
                       }}
                     >
-                      <Trash2 className="w-5 h-5" />
+                      <Trash2 className="w-5.5 h-5.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Discard draft</TooltipContent>
+                  <TooltipContent side="top" className="text-[10px] font-bold uppercase tracking-wider">Discard</TooltipContent>
                 </Tooltip>
 
-                <Button type="button" variant="ghost" size="icon" className="w-11 h-11 text-muted-foreground hover:bg-accent/50 rounded-xl transition-all">
-                    <MoreVertical className="w-5 h-5" />
+                <Button type="button" variant="ghost" size="icon" className="w-12 h-12 text-muted-foreground/40 hover:bg-muted rounded-2xl transition-all duration-300">
+                    <MoreVertical className="w-5.5 h-5.5" />
                 </Button>
               </div>
             </div>
@@ -708,21 +758,3 @@ export function EmailComposer({
     </Dialog>
   );
 }
-
-const PenLine = ({ className }: { className?: string }) => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={className}
-  >
-    <path d="M12 20h9" />
-    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-  </svg>
-);

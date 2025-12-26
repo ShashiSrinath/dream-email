@@ -86,14 +86,14 @@ export function EmailListItem({
       preload={"intent"}
       className={cn(
         "flex items-start gap-3 px-4 py-3 text-left border-b transition-all hover:bg-muted/40 group antialiased relative",
-        selectedEmailId === email.id && "bg-muted shadow-[inset_3px_0_0_0_theme(colors.primary.DEFAULT)]",
+        selectedEmailId === email.id && "bg-muted shadow-[inset_3px_0_0_0_var(--primary)]",
         isSelected && "bg-primary/5",
         isUnread && !isSelected && "bg-primary/[0.02]"
       )}
     >
       {/* Unread Indicator Dot */}
       {isUnread && !isSelected && (
-        <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(var(--primary),0.5)]" />
+        <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_var(--primary)] shadow-primary/50" />
       )}
 
       <div className="flex flex-col items-center justify-center pt-0.5 shrink-0">

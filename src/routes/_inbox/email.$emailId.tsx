@@ -361,7 +361,7 @@ function ThreadMessage({
 
       {/* Content */}
       {isExpanded && (
-        <div className="flex-1 flex flex-col bg-white rounded-b-xl relative z-10">
+        <div className="flex-1 flex flex-col bg-email-paper rounded-b-xl relative z-10">
           <div className="p-6 md:p-10 flex-1 flex flex-col">
             {loading ? (
               <div className="space-y-4 flex-1">
@@ -471,12 +471,12 @@ function EmailBody({
                         height: auto;
                         border-collapse: collapse;
                     }
-                    a { color: #2563eb; text-decoration: underline; }
+                    a { color: var(--primary, #2563eb); text-decoration: underline; }
                     blockquote {
-                        border-left: 3px solid #cbd5e1;
+                        border-left: 3px solid var(--border, #cbd5e1);
                         margin: 10px 0 10px 10px; 
                         padding-left: 15px;
-                        color: #64748b;
+                        color: var(--muted-foreground, #64748b);
                     }
                     * { 
                         box-sizing: border-box; 
@@ -544,14 +544,14 @@ function QuotedContent({ text }: { text: string }) {
       <Button
         variant="ghost"
         size="sm"
-        className="h-6 px-2 text-[#64748b] hover:text-[#1a1a1a] hover:bg-black/5"
+        className="h-6 px-2 text-muted-foreground hover:text-foreground hover:bg-accent"
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <MoreHorizontal className="w-4 h-4 mr-2" />
         {isExpanded ? "Hide quoted text" : "Show quoted text"}
       </Button>
       {isExpanded && (
-        <div className="border-l-2 border-[#cbd5e1] pl-4 mt-2 italic text-[#64748b]">
+        <div className="border-l-2 border-border pl-4 mt-2 italic text-muted-foreground">
           {text}
         </div>
       )}
@@ -590,8 +590,8 @@ function AttachmentsList({ attachments }: { attachments: Attachment[] }) {
   };
 
   return (
-    <div className="border-t border-[#cbd5e1] pt-6">
-      <h3 className="text-sm font-semibold flex items-center gap-2 mb-4 text-[#1a1a1a]">
+    <div className="border-t border-border pt-6">
+      <h3 className="text-sm font-semibold flex items-center gap-2 mb-4 text-foreground">
         <Paperclip className="w-4 h-4" />
         Attachments ({attachments.length})
       </h3>
@@ -600,16 +600,16 @@ function AttachmentsList({ attachments }: { attachments: Attachment[] }) {
           <button
             key={att.id}
             onClick={() => downloadAttachment(att)}
-            className="flex items-center gap-3 p-3 border border-[#cbd5e1] rounded-lg hover:bg-black/5 transition-colors text-left group"
+            className="flex items-center gap-3 p-3 border border-border rounded-lg hover:bg-accent transition-colors text-left group"
           >
-            <div className="w-10 h-10 rounded bg-[#2563eb]/10 flex items-center justify-center text-[#2563eb] shrink-0">
+            <div className="w-10 h-10 rounded bg-primary/10 flex items-center justify-center text-primary shrink-0">
               <Mail className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-medium truncate text-[#1a1a1a] group-hover:text-[#2563eb] transition-colors">
+              <p className="text-xs font-medium truncate text-foreground group-hover:text-primary transition-colors">
                 {att.filename || "Unnamed"}
               </p>
-              <p className="text-[10px] text-[#64748b]">
+              <p className="text-[10px] text-muted-foreground">
                 {formatSize(att.size)}
               </p>
             </div>

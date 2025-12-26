@@ -32,8 +32,8 @@ export function AppSidebar() {
   const setComposer = useEmailStore((state) => state.setComposer);
 
   return (
-    <Sidebar>
-      <SidebarHeader className="p-4 border-b h-16 justify-center">
+    <Sidebar variant="inset">
+      <SidebarHeader className="p-4 border-b border-sidebar-border h-16 justify-center">
         <div className="flex items-center gap-2 font-bold text-xl">
           <div className="bg-primary text-primary-foreground p-1 rounded-lg">
             <Mail className="w-6 h-6" />
@@ -180,7 +180,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="border-t">
+      <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>

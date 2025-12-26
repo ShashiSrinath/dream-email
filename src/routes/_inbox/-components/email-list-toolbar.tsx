@@ -39,7 +39,7 @@ export function EmailListToolbar({
         <Input
           type="search"
           placeholder="Search emails..."
-          className="pl-9 h-10 bg-muted/40 border-none focus-visible:ring-1 focus-visible:bg-background transition-all"
+          className="pl-9 h-10 bg-muted/30 border-none focus-visible:ring-1 focus-visible:bg-background transition-all"
           value={searchValue}
           onChange={(e) => onSearchChange(e.target.value)}
         />
