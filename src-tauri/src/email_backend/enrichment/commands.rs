@@ -1,6 +1,7 @@
 use tauri::Manager;
 use sqlx::SqlitePool;
 use chrono::Utc;
+use std::collections::HashMap;
 use crate::email_backend::enrichment::types::{Sender, Domain};
 use crate::email_backend::enrichment::providers::*;
 use crate::email_backend::enrichment::people::*;
@@ -120,18 +121,29 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     let mut is_personal_email: Option<bool> = None;
     let mut is_automated_mailer: Option<bool> = None;
 
-    // 0. Collect tokens for People API enrichment
+    // 0. Collect tokens and info for People API enrichment
     let mut google_accounts = Vec::new();
+    let mut own_info = std::collections::HashMap::new(); // email -> (name, picture)
     if let Ok(manager) = AccountManager::new(app_handle).await {
         if let Ok(registry) = manager.load().await {
-            google_accounts = registry.accounts.iter().filter_map(|a| {
+            for a in &registry.accounts {
                 match a {
                     crate::email_backend::accounts::manager::Account::Google(g) => {
-                        g.access_token.as_ref().map(|t| (g.email.clone(), t.clone()))
+                        if let Some(t) = &g.access_token {
+                            google_accounts.push((g.email.clone(), t.clone()));
+                        }
+                        own_info.insert(g.email.to_lowercase(), (g.name.clone(), g.picture.clone()));
                     }
                 }
-            }).collect();
+            }
         }
+    }
+
+    // 0a. Use own account info if available
+    if let Some((own_name, own_picture)) = own_info.get(&address.to_lowercase()) {
+        if name.is_none() { name = own_name.clone(); }
+        if avatar_url.is_none() { avatar_url = own_picture.clone(); }
+        is_personal_email = Some(true);
     }
 
     // 0. Try to find a name from existing emails in the DB
