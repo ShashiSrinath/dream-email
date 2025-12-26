@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import DOMPurify from "dompurify";
 import { useEmailStore, Attachment, EmailContent, Email } from "@/lib/store";
+import { useSettingsStore } from "@/lib/settings-store";
 import { SenderSidebar } from "./-components/sender-sidebar";
 import { SenderAvatar } from "@/components/sender-avatar";
 import { cn } from "@/lib/utils";
@@ -159,6 +160,8 @@ function ThreadMessage({
   const [content, setContent] = useState<EmailContent | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(false);
+  const aiEnabled = useSettingsStore(state => state.settings.aiEnabled);
+  const aiSummarizationEnabled = useSettingsStore(state => state.settings.aiSummarizationEnabled);
 
   // Update local email state if prop changes
   useEffect(() => {
@@ -371,7 +374,7 @@ ${email.snippet || ""}`,
               </div>
             ) : (
               <div className="space-y-8 flex-1 flex flex-col">
-                {email.summary && (
+                {email.summary && aiEnabled && aiSummarizationEnabled && (
                   <div className="p-5 rounded-2xl bg-primary/10 text-primary shadow-sm border border-primary/20 relative overflow-hidden group/summary">
                     <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover/summary:opacity-[0.07] transition-opacity">
                       <Sparkles className="w-16 h-16 -mr-4 -mt-4 rotate-12" />

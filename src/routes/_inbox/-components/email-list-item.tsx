@@ -4,6 +4,7 @@ import { Paperclip, Check, Reply, Forward, Sparkles } from "lucide-react";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Email, useEmailStore } from "@/lib/store";
+import { useSettingsStore } from "@/lib/settings-store";
 import { SenderAvatar } from "@/components/sender-avatar";
 
 interface EmailListItemProps {
@@ -33,6 +34,8 @@ export function EmailListItem({
   const isDraft = email.folder_id === -1;
   const setComposer = useEmailStore(state => state.setComposer);
   const accounts = useEmailStore(state => state.accounts);
+  const aiEnabled = useSettingsStore(state => state.settings.aiEnabled);
+  const aiSummarizationEnabled = useSettingsStore(state => state.settings.aiSummarizationEnabled);
   const account = useMemo(() => accounts.find(a => a.data.id === email.account_id), [accounts, email.account_id]);
 
   const date = useMemo(() => {
@@ -166,7 +169,7 @@ export function EmailListItem({
           </div>
         </div>
 
-        {email.summary ? (
+        {email.summary && aiEnabled && aiSummarizationEnabled ? (
           <div className="mt-1.5 p-2 rounded-lg bg-primary/[0.04] border border-primary/10 group-hover:bg-primary/[0.07] transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
             <div className="text-[12px] text-foreground/85 line-clamp-2 font-medium leading-snug flex gap-2 items-start">
               <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/80" />
