@@ -83,7 +83,10 @@ mock.module("@tanstack/react-router", () => ({
 // Mock IntersectionObserver
 const IntersectionObserverMock = mock(function(callback: any, _options: any) {
   return {
-    observe: mock(() => {}),
+    observe: mock((el) => {
+      // Simulate an initial intersection
+      callback([{ isIntersecting: true, intersectionRatio: 1, target: el, boundingClientRect: { top: 0 } }]);
+    }),
     unobserve: mock(() => {}),
     disconnect: mock(() => {}),
   };

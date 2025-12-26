@@ -23,22 +23,25 @@ import { cn } from "@/lib/utils";
 
 function useIsSticky() {
   const [isSticky, setIsSticky] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
 
     const observer = new IntersectionObserver(
-      ([e]) => setIsSticky(e.intersectionRatio < 1),
-      { threshold: [1], rootMargin: "-1px 0px 0px 0px" }
+      ([entry]) => {
+        // If the sentinel is not intersecting and is above the viewport, we're stuck
+        setIsSticky(!entry.isIntersecting && entry.boundingClientRect.top < 0);
+      },
+      { threshold: [0], rootMargin: "0px 0px 0px 0px" },
     );
 
     observer.observe(el);
     return () => observer.unobserve(el);
   }, []);
 
-  return { ref, isSticky };
+  return { sentinelRef, isSticky };
 }
 
 export const Route = createFileRoute("/_inbox/email/$emailId")({
@@ -158,69 +161,67 @@ function ThreadMessage({
   }) {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
     const [content, setContent] = useState<EmailContent | null>(null);
-    const [attachments, setAttachments] = useState<Attachment[]>([]);
-    const [loading, setLoading] = useState(false);
-    const { ref: headerRef, isSticky } = useIsSticky();
-  
-    useEffect(() => {
-      if (isExpanded && !content && !loading) {
-        setLoading(true);
-        Promise.all([
-          invoke<EmailContent>("get_email_content", { emailId: email.id }),
-          invoke<Attachment[]>("get_attachments", { emailId: email.id }),
-        ])
-          .then(([c, a]) => {
-            setContent(c);
-            setAttachments(a);
-            setLoading(false);
-          })
-          .catch((err) => {
-            console.error("Failed to fetch message content:", err);
-            setLoading(false);
-          });
-      }
-    }, [isExpanded, email.id, content, loading]);
-  
-    const handleContentClick = async (e: React.MouseEvent) => {
-      // For Shadow DOM, we need to check the composed path to find the actual element
-      const path = e.nativeEvent.composedPath();
-      const anchor = path.find((el) => (el as HTMLElement).tagName === "A") as
-        | HTMLAnchorElement
-        | undefined;
-  
-      if (anchor) {
-        const href = anchor.getAttribute("href");
-        if (href && (href.startsWith("http") || href.startsWith("mailto:"))) {
-          e.preventDefault();
-          try {
-            await openUrl(href);
-          } catch (error) {
-            console.error("Failed to open link:", error);
+      const [attachments, setAttachments] = useState<Attachment[]>([]);
+      const [loading, setLoading] = useState(false);
+      const { sentinelRef, isSticky } = useIsSticky();
+    
+      useEffect(() => {
+        if (isExpanded && !content && !loading) {
+          setLoading(true);
+          Promise.all([
+            invoke<EmailContent>("get_email_content", { emailId: email.id }),
+            invoke<Attachment[]>("get_attachments", { emailId: email.id }),
+          ])
+            .then(([c, a]) => {
+              setContent(c);
+              setAttachments(a);
+              setLoading(false);
+            })
+            .catch((err) => {
+              console.error("Failed to fetch message content:", err);
+              setLoading(false);
+            });
+        }
+      }, [isExpanded, email.id, content, loading]);
+    
+      const handleContentClick = async (e: React.MouseEvent) => {
+        // For Shadow DOM, we need to check the composed path to find the actual element
+        const path = e.nativeEvent.composedPath();
+        const anchor = path.find((el) => (el as HTMLElement).tagName === "A") as
+          | HTMLAnchorElement
+          | undefined;
+    
+        if (anchor) {
+          const href = anchor.getAttribute("href");
+          if (href && (href.startsWith("http") || href.startsWith("mailto:"))) {
+            e.preventDefault();
+            try {
+              await openUrl(href);
+            } catch (error) {
+              console.error("Failed to open link:", error);
+            }
           }
         }
-      }
-    };
-  
-    return (
-      <div
-        className={cn(
-          "bg-card text-card-foreground border transition-all flex flex-col shadow-sm relative",
-          isExpanded ? "ring-1 ring-primary/5 shadow-md" : "hover:bg-accent/50",
-          isSticky && isExpanded ? "rounded-none border-x-0" : "rounded-xl"
-        )}
-        style={(!isSticky || !isExpanded) ? { clipPath: "inset(0 round var(--radius-xl))" } : undefined}
-      >
-        {/* Header */}
+      };
+    
+      return (
         <div
-          ref={headerRef}
           className={cn(
-            "p-4 flex items-center gap-4 select-none cursor-pointer transition-colors shrink-0 sticky top-0 z-20",
-            isExpanded ? "border-b bg-background/95 backdrop-blur-sm shadow-sm" : "rounded-xl",
-            isSticky && isExpanded ? "rounded-none" : "rounded-t-xl"
+            "bg-card text-card-foreground border transition-all flex flex-col shadow-sm relative",
+            isExpanded ? "ring-1 ring-primary/5 shadow-md" : "hover:bg-accent/50",
+            isSticky && isExpanded ? "rounded-none border-x-0 border-t-0" : "rounded-xl",
           )}
-          onClick={() => setIsExpanded(!isExpanded)}
         >
-
+          <div ref={sentinelRef} className="absolute top-0 left-0 right-0 h-px invisible pointer-events-none" />
+          {/* Header */}
+          <div
+            className={cn(
+              "p-4 flex items-center gap-4 select-none cursor-pointer transition-colors shrink-0 sticky top-0 z-20",
+              isExpanded ? "border-b bg-background shadow-sm" : "rounded-xl",
+              isSticky && isExpanded ? "rounded-none" : "rounded-t-xl",
+            )}
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
           <SenderAvatar
 
             address={email.sender_address}
