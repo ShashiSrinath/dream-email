@@ -83,13 +83,12 @@ describe("ThreadView", () => {
       threadEmails: mockThreadEmails,
     }) as any;
 
-    const { getAllByText } = render(<ThreadView />);
+    const { getByLabelText } = render(<ThreadView />);
     
     // Wait for the message to be expanded (first one is by default) and content to load
     await waitFor(() => {
-        // There should be at least two "Reply" buttons (one in header, one at bottom)
-        expect(getAllByText("Reply").length).toBeGreaterThan(0);
-        expect(getAllByText("Forward").length).toBeGreaterThan(0);
+        expect(getByLabelText("Reply")).toBeInTheDocument();
+        expect(getByLabelText("Forward")).toBeInTheDocument();
     });
 
     Route.useLoaderData = originalUseLoaderData;

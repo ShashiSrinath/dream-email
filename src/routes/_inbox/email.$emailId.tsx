@@ -91,18 +91,18 @@ export function ThreadView() {
   return (
     <div className="flex h-full w-full min-w-0 overflow-hidden">
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-        <div className="px-4 py-6 border-b bg-background z-10 shrink-0 shadow-sm">
-          <div className="max-w-4xl mx-auto w-full">
-            <div className="flex justify-between items-start gap-4">
-              <h2 className="text-2xl font-bold flex-1 break-words line-clamp-2">
-                {displaySubject}
-              </h2>
+        <ScrollArea className="flex-1 min-h-0 bg-email-view">
+          <div className="px-4 py-8 border-b bg-background z-30 shrink-0 shadow-sm sticky top-0 mb-6">
+            <div className="max-w-4xl mx-auto w-full">
+              <div className="flex justify-between items-start gap-4">
+                <h2 className="text-2xl font-bold flex-1 break-words line-clamp-2">
+                  {displaySubject}
+                </h2>
+              </div>
             </div>
           </div>
-        </div>
 
-        <ScrollArea className="flex-1 min-h-0 bg-email-view">
-          <div className="max-w-4xl mx-auto w-full py-6 flex flex-col gap-4 px-4">
+          <div className="max-w-4xl mx-auto w-full pb-12 flex flex-col gap-4 px-4">
             {threadEmails.map((msg, index) => (
               <ThreadMessage
                 key={msg.id}
@@ -189,175 +189,135 @@ function ThreadMessage({
         isExpanded ? "ring-1 ring-primary/5 shadow-md" : "hover:bg-accent/50",
       )}
     >
-      {/* Header */}
-      <div
-        className={cn(
-          "p-4 flex items-center gap-4 select-none cursor-pointer transition-colors shrink-0",
-          isExpanded ? "border-b bg-muted/20" : "",
-        )}
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <SenderAvatar
-          address={email.sender_address}
-          name={email.sender_name}
-          avatarClassName="w-10 h-10 border border-border"
-        />
-        <div className="flex-1 min-w-0 flex items-center justify-between">
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-foreground text-base truncate">
-                {email.sender_name || email.sender_address}
-              </span>
-              {email.is_reply && (
-                <Reply className="w-3.5 h-3.5 text-muted-foreground" />
-              )}
-              {email.is_forward && (
-                <Forward className="w-3.5 h-3.5 text-muted-foreground" />
-              )}
-            </div>
-            {!isExpanded && (
-              <span className="text-sm text-muted-foreground truncate italic max-w-[500px]">
-                {email.snippet}
-              </span>
-            )}
-            {isExpanded && (
-              <span className="text-xs text-muted-foreground truncate">
-                To: {email.recipient_to || "Unknown"}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {isExpanded && (
-              <div className="flex items-center gap-1 mr-2">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-foreground/70 hover:text-primary hover:bg-primary/10 transition-colors"
-                                    onClick={(e) => {                    e.stopPropagation();
-                    useEmailStore.getState().setComposer({
-                      open: true,
-                      defaultTo: email.sender_address,
-                      defaultSubject: email.subject?.startsWith("Re: ")
-                        ? email.subject
-                        : `Re: ${email.subject}`,
-                      defaultBody: `<br><br>On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote>${email.snippet || ""}</blockquote>`,
-                    });
-                  }}
-                >
-                  <Reply className="w-4 h-4" />
-                </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-foreground/70 hover:text-primary hover:bg-primary/10 transition-colors"
-                                    onClick={(e) => {                    e.stopPropagation();
-                    useEmailStore.getState().setComposer({
-                      open: true,
-                      defaultTo: "",
-                      defaultSubject: email.subject?.startsWith("Fwd: ")
-                        ? email.subject
-                        : `Fwd: ${email.subject}`,
-                      defaultBody: `<br><br>---------- Forwarded message ---------
-From: ${email.sender_name} &lt;${email.sender_address}&gt;
-Date: ${format(new Date(email.date), "PPP p")}
-Subject: ${email.subject}
-
-${email.snippet || ""}`,
-                    });
-                  }}
-                >
-                  <Forward className="w-4 h-4" />
-                </Button>
-              </div>
-            )}
-            <span className="text-xs font-medium text-muted-foreground mr-2">
-              {format(new Date(email.date), "MMM d, p")}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 hover:bg-accent"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsExpanded(!isExpanded);
-              }}
-            >
-              {isExpanded ? (
-                <ChevronUp className="w-4 h-4" />
-              ) : (
-                <ChevronDown className="w-4 h-4" />
-              )}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Content */}
-      {isExpanded && (
-        <div className="flex-1 flex flex-col bg-white rounded-b-xl">
-          <div className="p-6 md:p-10 flex-1 flex flex-col">
-            {loading ? (
-              <div className="space-y-4 flex-1">
-                <Skeleton className="h-4 w-3/4 bg-[#e5e7eb]" />
-                <Skeleton className="h-4 w-full bg-[#e5e7eb]" />
-                <Skeleton className="h-4 w-5/6 bg-[#e5e7eb]" />
-              </div>
-            ) : (
-              <div className="space-y-8 flex-1 flex flex-col">
-                <EmailBody
-                  content={content}
-                  onContentClick={handleContentClick}
-                />
-                {attachments.length > 0 && (
-                  <AttachmentsList attachments={attachments} />
-                )}
-                
-                <div className="flex gap-3 pt-8 border-t">
-                  <Button 
-                    variant="secondary" 
-                    className="rounded-full px-8 font-semibold text-primary hover:bg-primary/10 transition-all"
-                    onClick={() => {
-                      useEmailStore.getState().setComposer({
-                        open: true,
-                        defaultTo: email.sender_address,
-                        defaultSubject: email.subject?.startsWith("Re: ")
-                          ? email.subject
-                          : `Re: ${email.subject}`,
-                        defaultBody: `<br><br>On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote>${email.snippet || ""}</blockquote>`,
-                      });
+                        {/* Header */}
+                        <div
+                          className={cn(
+                            "p-4 flex items-center gap-4 select-none cursor-pointer transition-colors shrink-0 sticky top-0 z-20",
+                            isExpanded ? "border-b bg-background/95 backdrop-blur-sm shadow-sm" : "",
+                          )}
+                          onClick={() => setIsExpanded(!isExpanded)}
+                        >              <SenderAvatar
+                address={email.sender_address}
+                name={email.sender_name}
+                avatarClassName="w-10 h-10 border border-border"
+              />
+              <div className="flex-1 min-w-0 flex items-center justify-between">
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-foreground text-base truncate">
+                      {email.sender_name || email.sender_address}
+                    </span>
+                    {email.is_reply && (
+                      <Reply className="w-3.5 h-3.5 text-muted-foreground" />
+                    )}
+                    {email.is_forward && (
+                      <Forward className="w-3.5 h-3.5 text-muted-foreground" />
+                    )}
+                  </div>
+                  {!isExpanded && (
+                    <span className="text-sm text-muted-foreground truncate italic max-w-[500px]">
+                      {email.snippet}
+                    </span>
+                  )}
+                  {isExpanded && (
+                    <span className="text-xs text-muted-foreground truncate">
+                      To: {email.recipient_to || "Unknown"}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {isExpanded && (
+                    <div className="flex items-center gap-1 mr-2">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-foreground/70 hover:text-primary hover:bg-primary/10 transition-colors"
+                                        aria-label="Reply"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          useEmailStore.getState().setComposer({
+                                            open: true,
+                                            defaultTo: email.sender_address,
+                                            defaultSubject: email.subject?.startsWith("Re: ")
+                                              ? email.subject
+                                              : `Re: ${email.subject}`,
+                                            defaultBody: `<br><br>On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote>${email.snippet || ""}</blockquote>`,
+                                          });
+                                        }}
+                                      >
+                                        <Reply className="w-4 h-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-foreground/70 hover:text-primary hover:bg-primary/10 transition-colors"
+                                        aria-label="Forward"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          useEmailStore.getState().setComposer({
+                                            open: true,
+                                            defaultTo: "",
+                                            defaultSubject: email.subject?.startsWith("Fwd: ")
+                                              ? email.subject
+                                              : `Fwd: ${email.subject}`,
+                                            defaultBody: `<br><br>---------- Forwarded message ---------
+                      From: ${email.sender_name} &lt;${email.sender_address}&gt;
+                      Date: ${format(new Date(email.date), "PPP p")}
+                      Subject: ${email.subject}
+                      
+                      ${email.snippet || ""}`,
+                                          });
+                                        }}
+                                      >
+                                        <Forward className="w-4 h-4" />
+                                      </Button>                    </div>
+                  )}
+                  <span className="text-xs font-medium text-muted-foreground mr-2">
+                    {format(new Date(email.date), "MMM d, p")}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 hover:bg-accent"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsExpanded(!isExpanded);
                     }}
                   >
-                    <Reply className="w-4 h-4 mr-2" />
-                    Reply
-                  </Button>
-                  <Button 
-                    variant="secondary" 
-                    className="rounded-full px-8 font-semibold text-primary hover:bg-primary/10 transition-all"
-                    onClick={() => {
-                      useEmailStore.getState().setComposer({
-                        open: true,
-                        defaultTo: "",
-                        defaultSubject: email.subject?.startsWith("Fwd: ")
-                          ? email.subject
-                          : `Fwd: ${email.subject}`,
-                        defaultBody: `<br><br>---------- Forwarded message ---------
-From: ${email.sender_name} &lt;${email.sender_address}&gt;
-Date: ${format(new Date(email.date), "PPP p")}
-Subject: ${email.subject}
-
-${email.snippet || ""}`,
-                      });
-                    }}
-                  >
-                    <Forward className="w-4 h-4 mr-2" />
-                    Forward
+                    {isExpanded ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
                   </Button>
                 </div>
               </div>
+            </div>
+      
+            {/* Content */}
+            {isExpanded && (
+              <div className="flex-1 flex flex-col bg-white rounded-b-xl relative">
+                <div className="p-6 md:p-10 flex-1 flex flex-col">
+                  {loading ? (
+                    <div className="space-y-4 flex-1">
+                      <Skeleton className="h-4 w-3/4 bg-[#e5e7eb]" />
+                      <Skeleton className="h-4 w-full bg-[#e5e7eb]" />
+                      <Skeleton className="h-4 w-5/6 bg-[#e5e7eb]" />
+                    </div>
+                  ) : (
+                    <div className="space-y-8 flex-1 flex flex-col">
+                      <EmailBody
+                        content={content}
+                        onContentClick={handleContentClick}
+                      />
+                      {attachments.length > 0 && (
+                        <AttachmentsList attachments={attachments} />
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
