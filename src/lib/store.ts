@@ -54,6 +54,7 @@ export type Sender = {
   twitter_handle: string | null;
   website_url: string | null;
   is_verified: boolean;
+  ai_last_enriched_at: string | null;
   last_enriched_at: string | null;
 };
 

@@ -2,19 +2,20 @@ import { useSenderInfo } from "@/hooks/use-sender-info";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Github, Linkedin, Twitter, Globe, MapPin, Briefcase, History, Building2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Email, Domain } from "@/lib/store";
 import { format } from "date-fns";
 import { Link } from "@tanstack/react-router";
 import { SenderAvatar } from "@/components/sender-avatar";
 
 export function SenderSidebar({ address, name }: { address: string; name?: string | null }) {
-  const { sender, loading } = useSenderInfo(address, true);
+  const { sender, loading: senderLoading } = useSenderInfo(address, true);
   const [recentEmails, setRecentEmails] = useState<Email[]>([]);
   const [domainInfo, setDomainInfo] = useState<Domain | null>(null);
 
-  useEffect(() => {
+  const fetchRecentEmails = useCallback(() => {
     if (address) {
       invoke<Email[]>("get_emails_by_sender", { address, limit: 5 })
         .then(setRecentEmails)
@@ -23,16 +24,31 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
   }, [address]);
 
   useEffect(() => {
+    setRecentEmails([]);
+    fetchRecentEmails();
+
+    const unlistenPromise = listen("emails-updated", () => {
+      fetchRecentEmails();
+    });
+
+    return () => {
+      unlistenPromise.then(unlisten => unlisten());
+    };
+  }, [address, fetchRecentEmails]);
+
+  useEffect(() => {
     if (sender?.company) {
       invoke<Domain | null>("get_domain_info", { domain: sender.company })
         .then(setDomainInfo)
         .catch(console.error);
+    } else {
+      setDomainInfo(null);
     }
   }, [sender?.company]);
 
-  if (loading && !sender) {
+  if (senderLoading && !sender) {
     return (
-      <div className="w-80 border-l p-6 space-y-6 hidden xl:block">
+      <div className="w-[320px] border-l p-6 space-y-6 hidden xl:block">
         <div className="flex flex-col items-center text-center space-y-4">
           <div className="w-24 h-24 rounded-full bg-muted animate-pulse" />
           <div className="h-6 w-3/4 bg-muted animate-pulse rounded" />
@@ -47,7 +63,8 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
       <ScrollArea className="flex-1 min-h-0 overflow-x-hidden">
         <div className="p-6 space-y-8 min-w-0 overflow-x-hidden">
           <div className="flex flex-col items-center text-center space-y-4 min-w-0 w-full overflow-hidden">
-            <SenderAvatar 
+            <SenderAvatar
+              key={address}
               address={address}
               name={name || sender?.name}
               avatarClassName="w-24 h-24 border-2 border-background shadow-sm text-2xl"
@@ -68,7 +85,7 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
             <div className="space-y-3 min-w-0">
               <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-semibold">Company</h4>
               <div className="flex items-center gap-3 p-3 bg-background rounded-lg border shadow-sm min-w-0">
-                <Avatar className="w-10 h-10 rounded-md shrink-0">
+                <Avatar className="w-10 h-10 rounded-md shrink-0" key={sender.company}>
                   <AvatarImage src={domainInfo?.logo_url || ""} />
                   <AvatarFallback className="rounded-md">
                     <Building2 className="w-5 h-5 text-muted-foreground" />
@@ -97,9 +114,9 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
                 {sender?.website_url && (
                   <div className="flex items-center gap-2.5 text-sm text-foreground/80 min-w-0">
                     <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <a 
-                      href={sender.website_url.startsWith('http') ? sender.website_url : `https://${sender.website_url}`} 
-                      target="_blank" 
+                    <a
+                      href={sender.website_url.startsWith('http') ? sender.website_url : `https://${sender.website_url}`}
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-primary hover:underline break-all line-clamp-2"
                     >
@@ -116,10 +133,10 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
               <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-semibold">Verified Profiles</h4>
               <div className="flex gap-3">
                 {sender?.linkedin_handle && (
-                  <a 
-                    href={sender.linkedin_handle.startsWith('http') ? sender.linkedin_handle : `https://linkedin.com/in/${sender.linkedin_handle}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
+                  <a
+                    href={sender.linkedin_handle.startsWith('http') ? sender.linkedin_handle : `https://linkedin.com/in/${sender.linkedin_handle}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="p-2 bg-[#0077b5]/10 text-[#0077b5] rounded-full hover:bg-[#0077b5]/20 transition-colors"
                     title="LinkedIn Profile"
                   >
@@ -127,10 +144,10 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
                   </a>
                 )}
                 {sender?.twitter_handle && (
-                  <a 
-                    href={sender.twitter_handle.startsWith('http') ? sender.twitter_handle : `https://twitter.com/${sender.twitter_handle}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
+                  <a
+                    href={sender.twitter_handle.startsWith('http') ? sender.twitter_handle : `https://twitter.com/${sender.twitter_handle}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="p-2 bg-foreground/5 text-foreground rounded-full hover:bg-foreground/10 transition-colors"
                     title="X (Twitter) Profile"
                   >
@@ -138,10 +155,10 @@ export function SenderSidebar({ address, name }: { address: string; name?: strin
                   </a>
                 )}
                 {sender?.github_handle && (
-                  <a 
-                    href={sender.github_handle.startsWith('http') ? sender.github_handle : `https://github.com/${sender.github_handle}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
+                  <a
+                    href={sender.github_handle.startsWith('http') ? sender.github_handle : `https://github.com/${sender.github_handle}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="p-2 bg-foreground/5 text-foreground rounded-full hover:bg-foreground/10 transition-colors"
                     title="GitHub Profile"
                   >

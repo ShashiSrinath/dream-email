@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 use sqlx::SqlitePool;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -17,7 +17,9 @@ pub async fn get_emails_by_sender<R: tauri::Runtime>(
     let pool = app_handle.state::<SqlitePool>();
 
     let emails = sqlx::query_as::<_, Email>(
-        "SELECT id, account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags, snippet, has_attachments
+        "SELECT id, account_id, folder_id, remote_id, message_id, thread_id, 1 as thread_count, in_reply_to, references_header, subject, sender_name, sender_address, recipient_to, date, flags, snippet, has_attachments,
+         (subject LIKE 'Re:%' OR subject LIKE 're:%' OR in_reply_to IS NOT NULL) as is_reply,
+         (subject LIKE 'Fwd:%' OR subject LIKE 'fwd:%' OR subject LIKE 'Fw:%' OR subject LIKE 'fw:%') as is_forward
          FROM emails
          WHERE sender_address = ?
          ORDER BY date DESC
@@ -457,6 +459,9 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     .execute(&*pool)
     .await
     .map_err(|e| e.to_string())?;
+
+    // Emit event so the frontend can refresh
+    let _ = app_handle.emit("sender-updated", &sender.address);
 
     Ok(sender)
 }
