@@ -58,10 +58,6 @@ pub fn get_gravatar_profile_url(email: &str) -> String {
     format!("https://www.gravatar.com/{}.json", get_email_hash(email))
 }
 
-pub fn get_google_avatar_url(email: &str) -> String {
-    format!("https://www.google.com/s2/photos/profile/{}", email)
-}
-
 pub fn get_favicon_url(domain: &str) -> String {
     format!("https://www.google.com/s2/favicons?domain={}&sz=128", domain)
 }

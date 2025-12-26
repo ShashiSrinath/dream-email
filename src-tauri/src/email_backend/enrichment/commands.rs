@@ -35,9 +35,11 @@ pub async fn get_emails_by_sender<R: tauri::Runtime>(
 pub async fn get_sender_info<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     address: String,
+    manual_trigger: Option<bool>,
 ) -> Result<Option<Sender>, String> {
-    log::info!("get_sender_info called for {}", address);
+    log::info!("get_sender_info called for {} (manual={:?})", address, manual_trigger);
     let pool = app_handle.state::<SqlitePool>();
+    let manual = manual_trigger.unwrap_or(false);
     
     let sender = sqlx::query_as::<_, Sender>("SELECT * FROM senders WHERE address = ?")
         .bind(&address)
@@ -53,17 +55,20 @@ pub async fn get_sender_info<R: tauri::Runtime>(
             None => true,
         };
 
-        if s.avatar_url.is_some() && !is_stale {
+        // If manual trigger is on, we check if AI enrichment has EVER been done
+        let needs_manual_ai = manual && s.ai_last_enriched_at.is_none();
+
+        if s.avatar_url.is_some() && !is_stale && !needs_manual_ai {
             log::info!("Returning cached sender info for {}", address);
             return Ok(Some(s));
         }
-        log::info!("Sender info for {} is stale or missing avatar, re-enriching", address);
+        log::info!("Sender info for {} needs update (stale={}, manual_ai={})", address, is_stale, needs_manual_ai);
     } else {
         log::info!("Sender {} not found in DB, enriching", address);
     }
 
     // If not found or needs update, try enrichment
-    let enriched = enrich_sender_internal(&app_handle, address).await?;
+    let enriched = enrich_sender_internal(&app_handle, address, manual).await?;
     Ok(Some(enriched))
 }
 #[tauri::command]
@@ -85,8 +90,9 @@ pub async fn get_domain_info<R: tauri::Runtime>(
 async fn enrich_sender_internal<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     address: String,
+    manual_trigger: bool,
 ) -> Result<Sender, String> {
-    log::info!("Starting enrichment for {}", address);
+    log::info!("Starting enrichment for {} (manual={})", address, manual_trigger);
     let pool = app_handle.state::<SqlitePool>();
 
     let domain_name = extract_domain(&address);
@@ -114,6 +120,20 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     let mut is_personal_email: Option<bool> = None;
     let mut is_automated_mailer: Option<bool> = None;
 
+    // 0. Collect tokens for People API enrichment
+    let mut google_accounts = Vec::new();
+    if let Ok(manager) = AccountManager::new(app_handle).await {
+        if let Ok(registry) = manager.load().await {
+            google_accounts = registry.accounts.iter().filter_map(|a| {
+                match a {
+                    crate::email_backend::accounts::manager::Account::Google(g) => {
+                        g.access_token.as_ref().map(|t| (g.email.clone(), t.clone()))
+                    }
+                }
+            }).collect();
+        }
+    }
+
     // 0. Try to find a name from existing emails in the DB
     let existing_name: Option<(Option<String>,)> = sqlx::query_as(
         "SELECT sender_name FROM emails WHERE sender_address = ? AND sender_name IS NOT NULL LIMIT 1"
@@ -129,39 +149,24 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
 
     // 1. People API Enrichment (Google, Microsoft, etc.)
     // We try this first because it's highly accurate for people we actually interact with.
-    if !is_system_address(&address) {
-        if let Ok(manager) = AccountManager::new(app_handle).await {
-            if let Ok(registry) = manager.load().await {
-                // Collect Google tokens
-                let google_accounts: Vec<(String, String)> = registry.accounts.iter().filter_map(|a| {
-                    match a {
-                        crate::email_backend::accounts::manager::Account::Google(g) => {
-                            g.access_token.as_ref().map(|t| (g.email.clone(), t.clone()))
-                        }
-                    }
-                }).collect();
-
-                if !google_accounts.is_empty() {
-                    let google_provider = GooglePeopleProvider { accounts: google_accounts };
-                    match google_provider.enrich(&address).await {
-                        Ok(Some(people_data)) => {
-                            log::info!("Enriched {} using Google People API", address);
-                            if let Some(n) = people_data.name { name = Some(n); }
-                            if let Some(av) = people_data.avatar_url { avatar_url = Some(av); }
-                            if let Some(jt) = people_data.job_title { job_title = Some(jt); }
-                            if let Some(c) = people_data.company { company = Some(c); }
-                            if let Some(b) = people_data.bio { bio = Some(b); }
-                            if let Some(loc) = people_data.location { location = Some(loc); }
-                            is_personal_email = Some(true);
-                        }
-                        Ok(None) => {
-                            log::info!("Google People API returned no results for {}", address);
-                        }
-                        Err(e) => {
-                            log::error!("Google People API enrichment failed for {}: {}", address, e);
-                        }
-                    }
-                }
+    if !is_system_address(&address) && !google_accounts.is_empty() {
+        let google_provider = GooglePeopleProvider { accounts: google_accounts.clone() };
+        match google_provider.enrich(&address).await {
+            Ok(Some(people_data)) => {
+                log::info!("Enriched {} using Google People API", address);
+                if let Some(n) = people_data.name { name = Some(n); }
+                if let Some(av) = people_data.avatar_url { avatar_url = Some(av); }
+                if let Some(jt) = people_data.job_title { job_title = Some(jt); }
+                if let Some(c) = people_data.company { company = Some(c); }
+                if let Some(b) = people_data.bio { bio = Some(b); }
+                if let Some(loc) = people_data.location { location = Some(loc); }
+                is_personal_email = Some(true);
+            }
+            Ok(None) => {
+                log::info!("Google People API returned no results for {}", address);
+            }
+            Err(e) => {
+                log::error!("Google People API enrichment failed for {}: {}", address, e);
             }
         }
     }
@@ -169,9 +174,9 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     // 1b. Google-specific profile photo fallback for Gmail addresses
     if avatar_url.is_none() {
         if let Some(d) = &domain_name {
-            if d == "gmail.com" || d == "googlemail.com" {
-                log::info!("Using Google profile photo fallback for {}", address);
-                avatar_url = Some(get_google_avatar_url(&address));
+            if (d == "gmail.com" || d == "googlemail.com") && !google_accounts.is_empty() {
+                log::info!("Using Google People API photo fallback for {}", address);
+                avatar_url = get_google_avatar_url(&address, &google_accounts).await;
             }
         }
     }
@@ -283,14 +288,36 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         // Run AI enrichment ONLY if:
         // 1. We have no job title yet
         // 2. OR the last AI run was more than 90 days ago (LLM data changes slowly)
-        let needs_ai = existing_job.is_none() || match last_ai_run {
+        let mut needs_ai = existing_job.is_none() || match last_ai_run {
             Some(last) => (Utc::now() - last).num_days() > 90,
             None => true,
         };
 
-        log::info!("Need ai running ai for : {}", &address);
+        // Date-based optimization for automatic triggers
+        if !manual_trigger && needs_ai {
+            // Check if this sender has any emails newer than account_creation - 14 days
+            let is_recent: (bool,) = sqlx::query_as(
+                "SELECT EXISTS(
+                    SELECT 1 FROM emails e
+                    JOIN accounts a ON e.account_id = a.id
+                    WHERE e.sender_address = ?
+                      AND datetime(e.date) > datetime(a.created_at, '-14 days')
+                 )"
+            )
+            .bind(&address)
+            .fetch_one(&*pool)
+            .await
+            .unwrap_or((false,));
 
-        if needs_ai {
+            if !is_recent.0 {
+                log::info!("Skipping automatic AI enrichment for {} - no recent emails", address);
+                needs_ai = false;
+            }
+        }
+
+        log::info!("Need ai running ai for : {} (needs_ai={}, manual={})", &address, needs_ai, manual_trigger);
+
+        if needs_ai || (manual_trigger && last_ai_run.is_none()) {
             // Fetch last 5 email snippets for this sender
             let snippets: Vec<String> = sqlx::query_scalar(
                 "SELECT snippet FROM emails WHERE sender_address = ? AND snippet IS NOT NULL ORDER BY date DESC LIMIT 5"
@@ -426,13 +453,16 @@ pub async fn proactive_enrichment<R: tauri::Runtime>(app_handle: &tauri::AppHand
     let pool = app_handle.state::<SqlitePool>();
 
     // Find unique senders from emails that are NOT in senders table OR have no avatar OR use the old Clearbit provider
+    // AND have at least one email newer than account_creation - 14 days
     let addresses: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT e.sender_address
          FROM emails e
+         JOIN accounts a ON e.account_id = a.id
          LEFT JOIN senders s ON e.sender_address = s.address
-         WHERE s.address IS NULL
+         WHERE (s.address IS NULL
             OR s.avatar_url IS NULL
-            OR s.avatar_url LIKE '%clearbit.com%'
+            OR s.avatar_url LIKE '%clearbit.com%')
+           AND datetime(e.date) > datetime(a.created_at, '-14 days')
          LIMIT 100" // Process in batches to avoid overwhelming APIs
     )
     .fetch_all(&*pool)
@@ -447,7 +477,7 @@ pub async fn proactive_enrichment<R: tauri::Runtime>(app_handle: &tauri::AppHand
 
     for address in addresses {
         // We ignore errors for individual senders to keep the loop going
-        let _ = enrich_sender_internal(app_handle, address).await;
+        let _ = enrich_sender_internal(app_handle, address, false).await;
         // Small delay to be polite to APIs
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }

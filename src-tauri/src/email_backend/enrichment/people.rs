@@ -22,6 +22,43 @@ pub struct GooglePeopleProvider {
     pub accounts: Vec<(String, String)>, // (email, access_token)
 }
 
+pub async fn get_google_avatar_url(
+    address: &str,
+    tokens: &[(String, String)],
+) -> Option<String> {
+    let client = Client::new();
+    for (_account_email, token) in tokens {
+        // We try to search for the contact to get their photo
+        let url = "https://people.googleapis.com/v1/people:searchContacts";
+        let resp = client
+            .get(url)
+            .query(&[
+                ("query", address),
+                ("readMask", "photos"),
+            ])
+            .bearer_auth(token)
+            .send()
+            .await;
+
+        if let Ok(resp) = resp {
+            if resp.status().is_success() {
+                if let Ok(search_resp) = resp.json::<GooglePeopleSearchResponse>().await {
+                    if let Some(results) = search_resp.results {
+                        if let Some(result) = results.first() {
+                            if let Some(photo) = result.person.photos.as_ref().and_then(|p| p.first()) {
+                                if let Some(url) = &photo.url {
+                                    return Some(url.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 #[derive(Deserialize)]
 struct GooglePersonResponse {
     names: Option<Vec<GooglePersonName>>,

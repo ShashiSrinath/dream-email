@@ -10,7 +10,7 @@ import { Link } from "@tanstack/react-router";
 import { SenderAvatar } from "@/components/sender-avatar";
 
 export function SenderSidebar({ address, name }: { address: string; name?: string | null }) {
-  const { sender, loading } = useSenderInfo(address);
+  const { sender, loading } = useSenderInfo(address, true);
   const [recentEmails, setRecentEmails] = useState<Email[]>([]);
   const [domainInfo, setDomainInfo] = useState<Domain | null>(null);
 
