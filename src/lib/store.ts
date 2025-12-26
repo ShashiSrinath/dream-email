@@ -149,6 +149,7 @@ interface EmailState {
     defaultBcc?: string;
     defaultSubject?: string;
     defaultBody?: string;
+    defaultAttachments?: Attachment[];
   };
   setComposer: (state: Partial<EmailState["composer"]>) => void;
 }

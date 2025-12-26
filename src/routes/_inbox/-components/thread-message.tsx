@@ -245,6 +245,7 @@ export function ThreadMessage({
                         ? email.subject
                         : `Fwd: ${email.subject}`,
                       defaultBody: `<br><br>---------- Forwarded message ---------<br>From: <b>${email.sender_name}</b> &lt;${email.sender_address}&gt;<br>Date: ${format(new Date(email.date), "PPP p")}<br>Subject: ${email.subject}<br>To: ${email.recipient_to || ""}<br><br>${forwardBody}`,
+                      defaultAttachments: attachments,
                     });
                   }}
                 >

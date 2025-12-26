@@ -14,9 +14,12 @@ import {
   DialogContent,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { useEmailStore } from "@/lib/store";
+import { Attachment, useEmailStore } from "@/lib/store";
 import {
   Code,
+  Paperclip,
+  X,
+  File,
 } from "lucide-react";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
@@ -46,6 +49,7 @@ interface EmailComposerProps {
   defaultBcc?: string;
   defaultSubject?: string;
   defaultBody?: string;
+  defaultAttachments?: Attachment[];
   draftId?: number;
 }
 
@@ -57,6 +61,7 @@ export function EmailComposer({
   defaultBcc = '',
   defaultSubject = '',
   defaultBody = '',
+  defaultAttachments = [],
   draftId: initialDraftId
 }: EmailComposerProps) {
   const accounts = useEmailStore(state => state.accounts);
@@ -67,6 +72,7 @@ export function EmailComposer({
   const [showBcc, setShowBcc] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [isCodeView, setIsCodeView] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>(defaultAttachments);
   const lastSavedRef = useRef<string>("");
 
   const { register, handleSubmit, control, watch, setValue, reset, formState: { errors } } = useForm<EmailFormValues>({
@@ -135,6 +141,7 @@ export function EmailComposer({
             editor?.commands.setContent(draft.body_html || '');
             setDraftId(initialDraftId);
             setIsSaved(true);
+            setAttachments(draft.attachments || []);
             if (draft.cc_address) setShowCc(true);
             if (draft.bcc_address) setShowBcc(true);
             lastSavedRef.current = JSON.stringify({
@@ -144,6 +151,7 @@ export function EmailComposer({
               bcc: draft.bcc_address || '',
               subject: draft.subject || '',
               body: draft.body_html || '',
+              attachmentIds: (draft.attachments || []).map((a: any) => a.id)
             });
           } catch (e) {
             console.error("Failed to fetch draft:", e);
@@ -160,6 +168,7 @@ export function EmailComposer({
           editor?.commands.setContent(defaultBody);
           setDraftId(undefined);
           setIsSaved(false);
+          setAttachments(defaultAttachments);
           setShowCc(!!defaultCc);
           setShowBcc(!!defaultBcc);
           lastSavedRef.current = "";
@@ -167,14 +176,14 @@ export function EmailComposer({
       };
       initComposer();
     }
-  }, [open, initialDraftId, defaultTo, defaultCc, defaultBcc, defaultSubject, defaultBody, reset, editor, accounts]);
+  }, [open, initialDraftId, defaultTo, defaultCc, defaultBcc, defaultSubject, defaultBody, defaultAttachments, reset, editor, accounts]);
 
   // Watch for changes to trigger autosave
   const formData = watch();
 
   // Sync editor content if body changes from outside (like code view)
   useEffect(() => {
-      if (isCodeView) return; 
+      if (isCodeView) return;
       const currentEditorHtml = editor?.getHTML();
       if (formData.body !== currentEditorHtml && formData.body !== undefined) {
           editor?.commands.setContent(formData.body, { emitUpdate: false });
@@ -184,11 +193,11 @@ export function EmailComposer({
   useEffect(() => {
     if (!open || !formData.accountId) return;
 
-    const currentDataString = JSON.stringify(formData);
+    const currentDataString = JSON.stringify({ ...formData, attachmentIds: attachments.map(a => a.id) });
     if (currentDataString === lastSavedRef.current) return;
 
     const timer = setTimeout(async () => {
-      if (!formData.to && !formData.subject && (formData.body === '<p></p>' || !formData.body)) return;
+      if (!formData.to && !formData.subject && (formData.body === '<p></p>' || !formData.body) && attachments.length === 0) return;
 
       try {
         const id = await invoke<number>("save_draft", {
@@ -198,7 +207,8 @@ export function EmailComposer({
           cc: formData.cc || null,
           bcc: formData.bcc || null,
           subject: formData.subject || null,
-          bodyHtml: formData.body || null
+          bodyHtml: formData.body || null,
+          attachmentIds: attachments.map(a => a.id)
         });
         if (!draftId) setDraftId(id);
         setIsSaved(true);
@@ -212,7 +222,7 @@ export function EmailComposer({
         clearTimeout(timer);
         setIsSaved(false);
     };
-  }, [formData, draftId, open]);
+  }, [formData, attachments, draftId, open]);
 
   const onSend = async (data: EmailFormValues) => {
     setIsSending(true);
@@ -223,7 +233,8 @@ export function EmailComposer({
         cc: data.cc || null,
         bcc: data.bcc || null,
         subject: data.subject,
-        body: data.body
+        body: data.body,
+        attachmentIds: attachments.map(a => a.id)
       });
 
       if (draftId) {
@@ -251,13 +262,17 @@ export function EmailComposer({
     onOpenChange?.(false);
   };
 
+  const handleRemoveAttachment = (id: number) => {
+    setAttachments(prev => prev.filter(a => a.id !== id));
+  };
+
   const handleClose = () => {
     onOpenChange?.(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent 
+      <DialogContent
         showCloseButton={false}
         className={cn(
             "flex flex-col p-0 gap-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] border-none shadow-2xl",
@@ -287,7 +302,7 @@ export function EmailComposer({
 
           <div className="flex-1 flex flex-col min-h-0 bg-background overflow-hidden relative">
             <MenuBar editor={editor} isCodeView={isCodeView} setIsCodeView={setIsCodeView} />
-            
+
             <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
               {isCodeView ? (
                 <div className="px-7 py-8 h-full flex flex-col">
@@ -309,14 +324,45 @@ export function EmailComposer({
                   />
                 </div>
               ) : (
-                <div 
-                  className="px-0 h-full cursor-text" 
+                <div
+                  className="px-0 h-full cursor-text"
                   onClick={() => editor?.commands.focus()}
                 >
                   <Controller
                     name="body"
                     control={control}
-                    render={() => <EditorContent editor={editor} className="h-full" />}
+                    render={() => (
+                      <div className="min-h-full flex flex-col">
+                        <EditorContent editor={editor} className="flex-1" />
+
+                        {attachments.length > 0 && (
+                          <div className="px-7 py-6 border-t bg-muted">
+                            <div className="flex items-center gap-2 mb-4 text-muted-foreground select-none">
+                              <Paperclip className="w-3.5 h-3.5" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider">{attachments.length} Attachments</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {attachments.map((att) => (
+                                <div
+                                  key={att.id}
+                                  className="group flex items-center gap-2 px-3 py-1.5 bg-background border rounded-full hover:border-primary/50 transition-all"
+                                >
+                                  <File className="w-3.5 h-3.5 text-primary/60" />
+                                  <span className="text-xs font-medium truncate max-w-[150px]">{att.filename || "Unnamed"}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveAttachment(att.id)}
+                                    className="p-0.5 rounded-full hover:bg-accent text-muted-foreground hover:text-foreground"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   />
                 </div>
               )}

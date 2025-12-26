@@ -12,6 +12,7 @@ use email::flag::add::AddFlags;
 use email::flag::Flag;
 use email::flag::Flags;
 use email::message::add::AddMessage;
+use mail_builder::MessageBuilder;
 use imap_client::imap_next::imap_types::sequence::Sequence;
 use imap_client::imap_next::imap_types::error::ValidationError;
 
@@ -66,6 +67,8 @@ pub struct Draft {
     pub subject: Option<String>,
     pub body_html: Option<String>,
     pub updated_at: String,
+    #[sqlx(skip)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -502,10 +505,11 @@ pub async fn save_draft<R: tauri::Runtime>(
     bcc: Option<String>,
     subject: Option<String>,
     body_html: Option<String>,
+    attachment_ids: Vec<i64>,
 ) -> Result<i64, String> {
     let pool = app_handle.state::<SqlitePool>();
     
-    if let Some(draft_id) = id {
+    let draft_id = if let Some(draft_id) = id {
         sqlx::query("UPDATE drafts SET to_address = ?, cc_address = ?, bcc_address = ?, subject = ?, body_html = ? WHERE id = ?")
             .bind(to)
             .bind(cc)
@@ -516,7 +520,7 @@ pub async fn save_draft<R: tauri::Runtime>(
             .execute(&*pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(draft_id)
+        draft_id
     } else {
         let row: (i64,) = sqlx::query_as("INSERT INTO drafts (account_id, to_address, cc_address, bcc_address, subject, body_html) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")
             .bind(account_id)
@@ -528,8 +532,40 @@ pub async fn save_draft<R: tauri::Runtime>(
             .fetch_one(&*pool)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(row.0)
+        row.0
+    };
+
+    // Handle attachments
+    // For now, we only support copying existing attachments (from forwarded emails)
+    // We clear existing draft attachments and re-add them to keep it simple
+    sqlx::query("DELETE FROM attachments WHERE draft_id = ?")
+        .bind(draft_id)
+        .execute(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    for att_id in attachment_ids {
+        // Find the attachment (could be from another email or another draft)
+        let att: Option<(Option<String>, Option<String>, i64, Vec<u8>)> = sqlx::query_as("SELECT filename, mime_type, size, data FROM attachments WHERE id = ?")
+            .bind(att_id)
+            .fetch_optional(&*pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if let Some(a) = att {
+            sqlx::query("INSERT INTO attachments (draft_id, filename, mime_type, size, data) VALUES (?, ?, ?, ?, ?)")
+                .bind(draft_id)
+                .bind(a.0)
+                .bind(a.1)
+                .bind(a.2)
+                .bind(a.3)
+                .execute(&*pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
+
+    Ok(draft_id)
 }
 
 #[tauri::command]
@@ -546,11 +582,19 @@ pub async fn get_drafts<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, acco
 #[tauri::command]
 pub async fn get_draft_by_id<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, id: i64) -> Result<Draft, String> {
     let pool = app_handle.state::<SqlitePool>();
-    let draft = sqlx::query_as::<_, Draft>("SELECT * FROM drafts WHERE id = ?")
+    let mut draft = sqlx::query_as::<_, Draft>("SELECT * FROM drafts WHERE id = ?")
         .bind(id)
         .fetch_one(&*pool)
         .await
         .map_err(|e| e.to_string())?;
+    
+    let attachments = sqlx::query_as::<_, Attachment>("SELECT id, -1 as email_id, filename, mime_type, size FROM attachments WHERE draft_id = ?")
+        .bind(id)
+        .fetch_all(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    draft.attachments = attachments;
     Ok(draft)
 }
 
@@ -911,32 +955,47 @@ pub async fn send_email<R: tauri::Runtime>(
     bcc: Option<String>,
     subject: String,
     body: String,
+    attachment_ids: Vec<i64>,
 ) -> Result<(), String> {
     let manager = AccountManager::new(&app_handle).await?;
     let account = manager.get_account_by_id(account_id).await?;
     let (account_config, _, smtp_config) = account.get_configs()?;
+    let pool = app_handle.state::<SqlitePool>();
 
-    let mut headers = format!(
-        "From: {}\r\nTo: {}\r\n",
-        account.email(),
-        to
-    );
+    let mut builder = MessageBuilder::new();
+    builder = builder.from(account.email());
+    builder = builder.to(to);
 
     if let Some(cc_val) = cc {
         if !cc_val.trim().is_empty() {
-            headers.push_str(&format!("Cc: {}\r\n", cc_val));
+            builder = builder.cc(cc_val);
         }
     }
 
     if let Some(bcc_val) = bcc {
         if !bcc_val.trim().is_empty() {
-            headers.push_str(&format!("Bcc: {}\r\n", bcc_val));
+            builder = builder.bcc(bcc_val);
         }
     }
 
-    headers.push_str(&format!("Subject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n", subject));
+    builder = builder.subject(subject);
+    builder = builder.html_body(body);
 
-    let message = format!("{}{}", headers, body);
+    for id in attachment_ids {
+        let att_info: (Option<String>, Option<String>, Vec<u8>) = sqlx::query_as("SELECT filename, mime_type, data FROM attachments WHERE id = ?")
+            .bind(id)
+            .fetch_one(&*pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        
+        builder = builder.attachment(
+            att_info.1.unwrap_or_else(|| "application/octet-stream".to_string()),
+            att_info.0.unwrap_or_else(|| "attachment".to_string()),
+            att_info.2
+        );
+    }
+
+    let message = builder.write_to_vec().map_err(|e| e.to_string())?;
 
     let backend_builder = BackendBuilder::new(
         account_config.clone(),
@@ -963,7 +1022,7 @@ pub async fn send_email<R: tauri::Runtime>(
         }
     };
 
-    if let Err(e) = backend.send_message(message.as_bytes()).await {
+    if let Err(e) = backend.send_message(&message).await {
         let err_str = e.to_string();
         if err_str.contains("auth") || err_str.contains("Unauthorized") || err_str.contains("token") || err_str.contains("credentials") {
             info!("Refreshing token for account {} due to send error: {}", account.email(), err_str);
@@ -975,14 +1034,13 @@ pub async fn send_email<R: tauri::Runtime>(
                 SmtpContextBuilder::new(account_config, smtp_config),
             );
             let backend = backend_builder.build().await.map_err(|e| e.to_string())?;
-            backend.send_message(message.as_bytes()).await.map_err(|e| e.to_string())?;
+            backend.send_message(&message).await.map_err(|e| e.to_string())?;
         } else {
             return Err(err_str);
         }
     }
 
     // Append to Sent Folder
-    let pool = app_handle.state::<SqlitePool>();
     let engine = app_handle.state::<SyncEngine<R>>();
 
     let sent_folder: Option<(i64, String)> = sqlx::query_as("SELECT id, path FROM folders WHERE account_id = ? AND role = 'sent'")
@@ -994,7 +1052,7 @@ pub async fn send_email<R: tauri::Runtime>(
     if let Some((folder_id, path)) = sent_folder {
          if let Ok(backend) = engine.get_backend(account_id).await {
             let flags = Flags::from_iter([Flag::Seen]);
-            let _ = backend.add_message_with_flags(&path, message.as_bytes(), &flags).await;
+            let _ = backend.add_message_with_flags(&path, &message, &flags).await;
             
             // Trigger refresh
             let _ = SyncEngine::refresh_folder(&app_handle, account_id, folder_id).await;

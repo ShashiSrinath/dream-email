@@ -1731,6 +1731,7 @@ dependencies = [
  "keyring",
  "langchain-rust",
  "log",
+ "mail-builder",
  "mail-parser",
  "md5",
  "oauth-lib",

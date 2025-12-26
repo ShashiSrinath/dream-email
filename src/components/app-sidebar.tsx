@@ -69,6 +69,7 @@ export function AppSidebar() {
           defaultBcc={composer.defaultBcc}
           defaultSubject={composer.defaultSubject}
           defaultBody={composer.defaultBody}
+          defaultAttachments={composer.defaultAttachments}
         />
 
         <SidebarGroup>
