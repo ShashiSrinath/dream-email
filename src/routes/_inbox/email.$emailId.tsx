@@ -300,13 +300,14 @@ function ThreadMessage({
                   aria-label="Reply"
                   onClick={(e) => {
                     e.stopPropagation();
+                    const replyBody = content?.body_html || content?.body_text || email.snippet || "";
                     useEmailStore.getState().setComposer({
                       open: true,
                       defaultTo: email.sender_address,
-                      defaultSubject: email.subject?.startsWith("Re: ")
+                      defaultSubject: email.subject?.toLowerCase().startsWith("re:")
                         ? email.subject
                         : `Re: ${email.subject}`,
-                      defaultBody: `<br><br>On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote>${email.snippet || ""}</blockquote>`,
+                      defaultBody: `<br><br><div class="gmail_quote">On ${format(new Date(email.date), "PPP p")}, ${email.sender_name || email.sender_address} wrote:<br><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${replyBody}</blockquote></div>`,
                     });
                   }}
                 >
@@ -320,18 +321,14 @@ function ThreadMessage({
                   aria-label="Forward"
                   onClick={(e) => {
                     e.stopPropagation();
+                    const forwardBody = content?.body_html || content?.body_text || email.snippet || "";
                     useEmailStore.getState().setComposer({
                       open: true,
                       defaultTo: "",
-                      defaultSubject: email.subject?.startsWith("Fwd: ")
+                      defaultSubject: email.subject?.toLowerCase().startsWith("fwd:")
                         ? email.subject
                         : `Fwd: ${email.subject}`,
-                      defaultBody: `<br><br>---------- Forwarded message ---------
-From: ${email.sender_name} &lt;${email.sender_address}&gt;
-Date: ${format(new Date(email.date), "PPP p")}
-Subject: ${email.subject}
-
-${email.snippet || ""}`,
+                      defaultBody: `<br><br>---------- Forwarded message ---------<br>From: <b>${email.sender_name}</b> &lt;${email.sender_address}&gt;<br>Date: ${format(new Date(email.date), "PPP p")}<br>Subject: ${email.subject}<br>To: ${email.recipient_to || ""}<br><br>${forwardBody}`,
                     });
                   }}
                 >

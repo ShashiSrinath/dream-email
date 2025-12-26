@@ -49,6 +49,8 @@ export function AppSidebar() {
                 open: true,
                 draftId: undefined,
                 defaultTo: "",
+                defaultCc: "",
+                defaultBcc: "",
                 defaultSubject: "",
                 defaultBody: "",
               })
@@ -65,6 +67,8 @@ export function AppSidebar() {
           onOpenChange={(open) => setComposer({ open })}
           draftId={composer.draftId}
           defaultTo={composer.defaultTo}
+          defaultCc={composer.defaultCc}
+          defaultBcc={composer.defaultBcc}
           defaultSubject={composer.defaultSubject}
           defaultBody={composer.defaultBody}
         />

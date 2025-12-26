@@ -58,6 +58,8 @@ pub struct Draft {
     pub id: i64,
     pub account_id: i64,
     pub to_address: Option<String>,
+    pub cc_address: Option<String>,
+    pub bcc_address: Option<String>,
     pub subject: Option<String>,
     pub body_html: Option<String>,
     pub updated_at: String,
@@ -466,14 +468,18 @@ pub async fn save_draft<R: tauri::Runtime>(
     id: Option<i64>,
     account_id: i64,
     to: Option<String>,
+    cc: Option<String>,
+    bcc: Option<String>,
     subject: Option<String>,
     body_html: Option<String>,
 ) -> Result<i64, String> {
     let pool = app_handle.state::<SqlitePool>();
     
     if let Some(draft_id) = id {
-        sqlx::query("UPDATE drafts SET to_address = ?, subject = ?, body_html = ? WHERE id = ?")
+        sqlx::query("UPDATE drafts SET to_address = ?, cc_address = ?, bcc_address = ?, subject = ?, body_html = ? WHERE id = ?")
             .bind(to)
+            .bind(cc)
+            .bind(bcc)
             .bind(subject)
             .bind(body_html)
             .bind(draft_id)
@@ -482,9 +488,11 @@ pub async fn save_draft<R: tauri::Runtime>(
             .map_err(|e| e.to_string())?;
         Ok(draft_id)
     } else {
-        let row: (i64,) = sqlx::query_as("INSERT INTO drafts (account_id, to_address, subject, body_html) VALUES (?, ?, ?, ?) RETURNING id")
+        let row: (i64,) = sqlx::query_as("INSERT INTO drafts (account_id, to_address, cc_address, bcc_address, subject, body_html) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")
             .bind(account_id)
             .bind(to)
+            .bind(cc)
+            .bind(bcc)
             .bind(subject)
             .bind(body_html)
             .fetch_one(&*pool)
@@ -703,6 +711,8 @@ pub async fn send_email<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     account_id: i64,
     to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
     subject: String,
     body: String,
 ) -> Result<(), String> {
@@ -710,13 +720,27 @@ pub async fn send_email<R: tauri::Runtime>(
     let account = manager.get_account_by_id(account_id).await?;
     let (account_config, _, smtp_config) = account.get_configs()?;
 
-    let message = format!(
-        "From: {}\r\nTo: {}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{}",
+    let mut headers = format!(
+        "From: {}\r\nTo: {}\r\n",
         account.email(),
-        to,
-        subject,
-        body
+        to
     );
+
+    if let Some(cc_val) = cc {
+        if !cc_val.trim().is_empty() {
+            headers.push_str(&format!("Cc: {}\r\n", cc_val));
+        }
+    }
+
+    if let Some(bcc_val) = bcc {
+        if !bcc_val.trim().is_empty() {
+            headers.push_str(&format!("Bcc: {}\r\n", bcc_val));
+        }
+    }
+
+    headers.push_str(&format!("Subject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n", subject));
+
+    let message = format!("{}{}", headers, body);
 
     let backend_builder = BackendBuilder::new(
         account_config.clone(),

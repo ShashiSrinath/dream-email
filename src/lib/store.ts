@@ -143,6 +143,8 @@ interface EmailState {
     open: boolean;
     draftId?: number;
     defaultTo?: string;
+    defaultCc?: string;
+    defaultBcc?: string;
     defaultSubject?: string;
     defaultBody?: string;
   };
