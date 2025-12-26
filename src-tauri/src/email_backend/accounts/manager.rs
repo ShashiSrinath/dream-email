@@ -85,9 +85,10 @@ impl Account {
 
                 let smtp_config = Arc::new(SmtpConfig {
                     host: "smtp.gmail.com".into(),
-                    port: 465,
+                    port: 587,
                     login: google.email.clone(),
                     auth: SmtpAuthConfig::OAuth2(oauth2_config),
+                    encryption: Some(email::tls::Encryption::StartTls(email::tls::Tls::default())),
                     ..Default::default()
                 });
 
@@ -196,6 +197,7 @@ impl<R: tauri::Runtime> AccountManager<R> {
                     client_secret: Some(Secret::new_raw(client_secret)),
                     auth_url: "https://accounts.google.com/o/oauth2/auth".into(),
                     token_url: "https://www.googleapis.com/oauth2/v3/token".into(),
+                    access_token: google.access_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),
                     refresh_token: google.refresh_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),
                     ..Default::default()
                 };
