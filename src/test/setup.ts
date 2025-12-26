@@ -80,6 +80,20 @@ mock.module("@tanstack/react-router", () => ({
   Outlet: () => React.createElement("div", { "data-testid": "outlet" }),
 }));
 
+// Mock IntersectionObserver
+const IntersectionObserverMock = mock(function(callback: any, _options: any) {
+  return {
+    observe: mock(() => {}),
+    unobserve: mock(() => {}),
+    disconnect: mock(() => {}),
+  };
+});
+
+Object.defineProperty(globalThis, 'IntersectionObserver', {
+  writable: true,
+  value: IntersectionObserverMock,
+});
+
 afterEach(() => {
   cleanup();
   useEmailStore.getState().reset();

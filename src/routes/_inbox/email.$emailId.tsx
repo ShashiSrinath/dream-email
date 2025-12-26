@@ -21,6 +21,26 @@ import { SenderSidebar } from "./-components/sender-sidebar";
 import { SenderAvatar } from "@/components/sender-avatar";
 import { cn } from "@/lib/utils";
 
+function useIsSticky() {
+  const [isSticky, setIsSticky] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      ([e]) => setIsSticky(e.intersectionRatio < 1),
+      { threshold: [1], rootMargin: "-1px 0px 0px 0px" }
+    );
+
+    observer.observe(el);
+    return () => observer.unobserve(el);
+  }, []);
+
+  return { ref, isSticky };
+}
+
 export const Route = createFileRoute("/_inbox/email/$emailId")({
   loader: async ({ params: { emailId } }) => {
     const id = parseInt(emailId);
@@ -130,86 +150,75 @@ export function ThreadView() {
 }
 
 function ThreadMessage({
-  email,
-  defaultExpanded,
-}: {
-  email: Email;
-  defaultExpanded: boolean;
-}) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-  const [content, setContent] = useState<EmailContent | null>(null);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (isExpanded && !content && !loading) {
-      setLoading(true);
-      Promise.all([
-        invoke<EmailContent>("get_email_content", { emailId: email.id }),
-        invoke<Attachment[]>("get_attachments", { emailId: email.id }),
-      ])
-        .then(([c, a]) => {
-          setContent(c);
-          setAttachments(a);
-          setLoading(false);
-        })
-        .catch((err) => {
-          console.error("Failed to fetch message content:", err);
-          setLoading(false);
-        });
-    }
-  }, [isExpanded, email.id, content, loading]);
-
-  const handleContentClick = async (e: React.MouseEvent) => {
-    // For Shadow DOM, we need to check the composed path to find the actual element
-    const path = e.nativeEvent.composedPath();
-    const anchor = path.find((el) => (el as HTMLElement).tagName === "A") as
-      | HTMLAnchorElement
-      | undefined;
-
-    if (anchor) {
-      const href = anchor.getAttribute("href");
-      if (href && (href.startsWith("http") || href.startsWith("mailto:"))) {
-        e.preventDefault();
-        try {
-          await openUrl(href);
-        } catch (error) {
-          console.error("Failed to open link:", error);
+    email,
+    defaultExpanded,
+  }: {
+    email: Email;
+    defaultExpanded: boolean;
+  }) {
+    const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+    const [content, setContent] = useState<EmailContent | null>(null);
+    const [attachments, setAttachments] = useState<Attachment[]>([]);
+    const [loading, setLoading] = useState(false);
+    const { ref: headerRef, isSticky } = useIsSticky();
+  
+    useEffect(() => {
+      if (isExpanded && !content && !loading) {
+        setLoading(true);
+        Promise.all([
+          invoke<EmailContent>("get_email_content", { emailId: email.id }),
+          invoke<Attachment[]>("get_attachments", { emailId: email.id }),
+        ])
+          .then(([c, a]) => {
+            setContent(c);
+            setAttachments(a);
+            setLoading(false);
+          })
+          .catch((err) => {
+            console.error("Failed to fetch message content:", err);
+            setLoading(false);
+          });
+      }
+    }, [isExpanded, email.id, content, loading]);
+  
+    const handleContentClick = async (e: React.MouseEvent) => {
+      // For Shadow DOM, we need to check the composed path to find the actual element
+      const path = e.nativeEvent.composedPath();
+      const anchor = path.find((el) => (el as HTMLElement).tagName === "A") as
+        | HTMLAnchorElement
+        | undefined;
+  
+      if (anchor) {
+        const href = anchor.getAttribute("href");
+        if (href && (href.startsWith("http") || href.startsWith("mailto:"))) {
+          e.preventDefault();
+          try {
+            await openUrl(href);
+          } catch (error) {
+            console.error("Failed to open link:", error);
+          }
         }
       }
-    }
-  };
-
+    };
+  
     return (
-
-          <div
-
-            className={cn(
-
-              "bg-card text-card-foreground border rounded-xl transition-all flex flex-col shadow-sm relative",
-
-              isExpanded ? "ring-1 ring-primary/5 shadow-md" : "hover:bg-accent/50",
-
-            )}
-
-            style={{ clipPath: "inset(0 round var(--radius-xl))" }}
-
-          >
-
+      <div
+        className={cn(
+          "bg-card text-card-foreground border transition-all flex flex-col shadow-sm relative",
+          isExpanded ? "ring-1 ring-primary/5 shadow-md" : "hover:bg-accent/50",
+          isSticky && isExpanded ? "rounded-none border-x-0" : "rounded-xl"
+        )}
+        style={(!isSticky || !isExpanded) ? { clipPath: "inset(0 round var(--radius-xl))" } : undefined}
+      >
         {/* Header */}
-
         <div
-
+          ref={headerRef}
           className={cn(
-
-            "p-4 flex items-center gap-4 select-none cursor-pointer transition-colors shrink-0 sticky top-0 z-20 rounded-t-xl",
-
+            "p-4 flex items-center gap-4 select-none cursor-pointer transition-colors shrink-0 sticky top-0 z-20",
             isExpanded ? "border-b bg-background/95 backdrop-blur-sm shadow-sm" : "rounded-xl",
-
+            isSticky && isExpanded ? "rounded-none" : "rounded-t-xl"
           )}
-
           onClick={() => setIsExpanded(!isExpanded)}
-
         >
 
           <SenderAvatar
