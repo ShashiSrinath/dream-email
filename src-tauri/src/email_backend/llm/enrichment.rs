@@ -1,50 +1,169 @@
-use langchain_rust::chain::{Chain, LLMChainBuilder};
-use langchain_rust::{prompt_args, template_fstring};
-use serde_json::Value;
-use crate::email_backend::llm::client::get_openai_client;
+use serde_json::{Value, json};
+use log::{info, error, debug, warn};
+use sqlx::SqlitePool;
+use tauri::Manager;
 
 pub async fn enrich_sender_with_ai<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     sender_address: &str,
     email_snippets: Vec<String>,
 ) -> Result<Value, String> {
-    let client = get_openai_client(app_handle).await?;
+    debug!("Starting AI enrichment for sender: {}", sender_address);
+    
+    let mut last_error = String::new();
+    let max_retries = 2;
 
-    let prompt = template_fstring!(
-        r#"You are an expert at extracting professional information from email snippets.
-Extract the following information about the sender '{sender}' from these email snippets:
-- Job Title
-- Company
-- A brief professional bio (max 2 sentences)
-- is_personal_email: true if the sender appears to be an individual's personal email, false otherwise. (joh.doe@gmail.com and john.doe@company.com are both valid for this)
-- is_automated_mailer: true if the sender appears to be an automated mailing service or newsletter, false otherwise.
+    for attempt in 1..=max_retries {
+        match try_enrich_sender_direct(app_handle, sender_address, &email_snippets).await {
+            Ok(json_val) => {
+                info!("Successfully enriched sender: {} (attempt {})", sender_address, attempt);
+                return Ok(json_val);
+            }
+            Err(e) => {
+                warn!("AI enrichment attempt {} failed for {}: {}", attempt, sender_address, e);
+                last_error = e;
+                // Small delay before retry
+                if attempt < max_retries {
+                    tokio::time::sleep(std::time::Duration::from_millis(1000 * attempt as u64)).await;
+                }
+            }
+        }
+    }
 
-Emails:
-{emails}
+    error!("AI enrichment failed for {} after {} attempts. Last error: {}", sender_address, max_retries, last_error);
+    Err(last_error)
+}
 
-Respond ONLY with a JSON object containing keys: 'job_title', 'company', 'bio', 'is_personal_email', 'is_automated_mailer'.
-If a piece of information is not found, use null.
-Example response: {{"job_title": "Software Engineer", "company": "Google", "bio": "A passionate developer working on AI.", "is_personal_email": false, "is_automated_mailer": true}}"#,
-        "sender", "emails"
-    );
+async fn try_enrich_sender_direct<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    sender_address: &str,
+    email_snippets: &[String],
+) -> Result<Value, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    
+    let rows: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings WHERE key IN ('aiApiKey', 'aiBaseUrl', 'aiModel')")
+        .fetch_all(&*pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        
+    let mut api_key = String::new();
+    let mut base_url = String::from("https://api.openai.com/v1");
+    let mut model = String::new();
+
+    for (key, value) in rows {
+        let unquoted = serde_json::from_str::<String>(&value).unwrap_or(value);
+        match key.as_str() {
+            "aiApiKey" => api_key = unquoted,
+            "aiBaseUrl" => base_url = unquoted,
+            "aiModel" => model = unquoted,
+            _ => {}
+        }
+    }
+
+    if api_key.is_empty() || model.is_empty() {
+        return Err("AI API Key or Model not configured".to_string());
+    }
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
     let emails_combined = email_snippets.join("\n---\n");
+    let system_prompt = format!(
+        r#"You are an expert at extracting professional information from email snippets.
+Your task is to extract information about the sender '{sender_address}' based ONLY on the provided email snippets.
 
-    let chain = LLMChainBuilder::new()
-        .prompt(prompt)
-        .llm(client)
-        .build()
-        .map_err(|e| e.to_string())?;
+Information to extract:
+- name: Full Name
+- job_title: Job Title (e.g., Software Engineer, CEO, Sales Manager)
+- company: Company name
+- bio: A brief professional bio (max 2 sentences)
+- location: City and/or Country if identifiable
+- is_personal_email: true if this looks like an individual's personal account, false otherwise.
+- is_automated_mailer: true if this is an automated service, notification system, or newsletter.
 
-    let response = chain.invoke(prompt_args! {
-        "sender" => sender_address,
-        "emails" => emails_combined,
-    }).await.map_err(|e| e.to_string())?;
+OUTPUT INSTRUCTIONS:
+- Respond ONLY with a valid JSON object.
+- DO NOT include markdown code blocks.
+- If a piece of information is missing, use null.
+- Ensure all keys are present in the JSON.
 
-    // The response is usually a string, try to parse it as JSON
-    let cleaned_response = response.trim().trim_start_matches("```json").trim_end_matches("```").trim();
-    let json_val: Value = serde_json::from_str(cleaned_response)
-        .map_err(|e| format!("Failed to parse AI response as JSON: {}. Response: {}", e, cleaned_response))?;
+JSON Structure:
+{{
+  "name": "string or null",
+  "job_title": "string or null",
+  "company": "string or null",
+  "bio": "string or null",
+  "location": "string or null",
+  "is_personal_email": boolean,
+  "is_automated_mailer": boolean
+}}"#,
+        sender_address = sender_address
+    );
 
-    Ok(json_val)
+    let body = json!({
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": format!("Emails:\n{}", emails_combined)
+            }
+        ],
+        "temperature": 0.1,
+        "stream": false
+    });
+
+    let resp = client.post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_text = resp.text().await.unwrap_or_default();
+        return Err(format!("AI API error ({}): {}", status, err_text));
+    }
+
+    let response_json: Value = resp.json().await.map_err(|e| format!("Failed to parse response JSON: {}", e))?;
+    
+    let ai_content = response_json["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| format!("Unexpected AI response structure: {:?}", response_json))?;
+
+    info!("Raw AI response for {}: {}", sender_address, ai_content);
+
+    let cleaned_response = extract_json(ai_content);
+    
+    match serde_json::from_str::<Value>(&cleaned_response) {
+        Ok(json_val) => {
+            let required_keys = ["name", "job_title", "company", "is_personal_email", "is_automated_mailer"];
+            for key in required_keys {
+                if json_val.get(key).is_none() {
+                    return Err(format!("Missing required key '{}' in AI response", key));
+                }
+            }
+            Ok(json_val)
+        }
+        Err(e) => {
+            Err(format!("Failed to parse JSON: {}. Cleaned response: {}", e, cleaned_response))
+        }
+    }
+}
+
+fn extract_json(s: &str) -> String {
+    let s = s.trim();
+    if let (Some(start), Some(end)) = (s.find('{'), s.rfind('}')) {
+        s[start..=end].to_string()
+    } else {
+        s.trim_start_matches("```json")
+         .trim_start_matches("```")
+         .trim_end_matches("```")
+         .trim()
+         .to_string()
+    }
 }

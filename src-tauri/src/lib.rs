@@ -18,7 +18,18 @@ pub fn run() {
     dotenvy::dotenv().ok();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout)).build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout))
+                .level(log::LevelFilter::Warn)
+                .level_for("dream_email_lib", log::LevelFilter::Info)
+                .level_for("langchain_rust", log::LevelFilter::Warn)
+                .level_for("reqwest", log::LevelFilter::Warn)
+                .level_for("sqlx", log::LevelFilter::Warn)
+                .level_for("tower", log::LevelFilter::Warn)
+                .level_for("hyper", log::LevelFilter::Warn)
+                .build()
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| match event {
@@ -77,7 +88,7 @@ pub fn run() {
 
             let sync_engine = SyncEngine::new(handle.clone());
             app.manage(sync_engine.clone());
-            
+
             tauri::async_runtime::spawn(async move {
                 sync_engine.start().await;
             });

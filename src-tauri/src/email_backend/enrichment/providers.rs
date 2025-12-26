@@ -1,5 +1,4 @@
 use md5;
-use sha2::{Sha256, Digest};
 use serde::{Deserialize, Serialize};
 use addr::parse_domain_name;
 
@@ -57,6 +56,10 @@ pub fn get_gravatar_url(email: &str) -> String {
 
 pub fn get_gravatar_profile_url(email: &str) -> String {
     format!("https://www.gravatar.com/{}.json", get_email_hash(email))
+}
+
+pub fn get_google_avatar_url(email: &str) -> String {
+    format!("https://www.google.com/s2/photos/profile/{}", email)
 }
 
 pub fn get_favicon_url(domain: &str) -> String {

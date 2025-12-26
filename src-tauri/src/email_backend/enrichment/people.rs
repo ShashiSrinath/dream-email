@@ -19,7 +19,17 @@ pub trait PeopleProvider: Send + Sync {
 }
 
 pub struct GooglePeopleProvider {
-    pub access_tokens: Vec<String>,
+    pub accounts: Vec<(String, String)>, // (email, access_token)
+}
+
+#[derive(Deserialize)]
+struct GooglePersonResponse {
+    names: Option<Vec<GooglePersonName>>,
+    photos: Option<Vec<GooglePersonPhoto>>,
+    organizations: Option<Vec<GooglePersonOrganization>>,
+    biographies: Option<Vec<GooglePersonBiography>>,
+    #[serde(rename = "emailAddresses")]
+    email_addresses: Option<Vec<GooglePersonEmailAddress>>,
 }
 
 #[derive(Deserialize)]
@@ -77,9 +87,41 @@ impl PeopleProvider for GooglePeopleProvider {
 
     async fn enrich(&self, address: &str) -> Result<Option<PeopleEnrichmentData>, String> {
         let client = Client::new();
+        log::info!("Attempting Google People API enrichment for {} with {} accounts", address, self.accounts.len());
 
-        for token in &self.access_tokens {
-            // https://developers.google.com/people/api/rest/v1/people/searchContacts
+        for (account_email, token) in &self.accounts {
+            // If the address matches the account email, we can use people/me
+            if address.to_lowercase() == account_email.to_lowercase() {
+                log::info!("Address {} matches account email, trying people/me", address);
+                let url = "https://people.googleapis.com/v1/people/me";
+                let resp = client
+                    .get(url)
+                    .query(&[
+                        ("personFields", "names,photos,organizations,biographies,emailAddresses"),
+                    ])
+                    .bearer_auth(token)
+                    .send()
+                    .await;
+
+                if let Ok(resp) = resp {
+                    if resp.status().is_success() {
+                        if let Ok(person) = resp.json::<GooglePersonResponse>().await {
+                            let mut data = PeopleEnrichmentData::default();
+                            data.name = person.names.and_then(|mut n| if n.is_empty() { None } else { Some(n.remove(0)) }).and_then(|n| n.display_name);
+                            data.avatar_url = person.photos.and_then(|mut p| if p.is_empty() { None } else { Some(p.remove(0)) }).and_then(|p| p.url);
+                            if let Some(org) = person.organizations.and_then(|mut o| if o.is_empty() { None } else { Some(o.remove(0)) }) {
+                                data.job_title = org.title;
+                                data.company = org.name;
+                            }
+                            data.bio = person.biographies.and_then(|mut b| if b.is_empty() { None } else { Some(b.remove(0)) }).and_then(|b| b.value);
+                            log::info!("Successfully enriched {} using people/me", address);
+                            return Ok(Some(data));
+                        }
+                    }
+                }
+            }
+
+            // Fallback to searching contacts
             let url = "https://people.googleapis.com/v1/people:searchContacts";
 
             let resp = client
@@ -93,38 +135,54 @@ impl PeopleProvider for GooglePeopleProvider {
                 .await;
 
             match resp {
-                Ok(resp) if resp.status().is_success() => {
-                    let search_resp: GooglePeopleSearchResponse = resp.json().await.map_err(|e| e.to_string())?;
-                    if let Some(results) = search_resp.results {
-                        // Find the result that matches the email address exactly if possible
-                        let best_match = results.into_iter().find(|r| {
-                            r.person.email_addresses.as_ref().map_or(false, |emails| {
-                                emails.iter().any(|e| e.value.as_ref().map_or(false, |v| v.to_lowercase() == address.to_lowercase()))
-                            })
-                        });
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        let text = resp.text().await.map_err(|e| e.to_string())?;
+                        log::debug!("Google People API search response for {}: {}", address, text);
+                        let search_resp: GooglePeopleSearchResponse = serde_json::from_str(&text).map_err(|e| {
+                            log::error!("Failed to parse Google People API response: {}", e);
+                            e.to_string()
+                        })?;
+                        if let Some(results) = search_resp.results {
+                            log::info!("Found {} results for {} in Google Contacts", results.len(), address);
+                            // Find the result that matches the email address exactly if possible
+                            let best_match = results.into_iter().find(|r| {
+                                r.person.email_addresses.as_ref().map_or(false, |emails| {
+                                    emails.iter().any(|e| e.value.as_ref().map_or(false, |v| v.to_lowercase() == address.to_lowercase()))
+                                })
+                            });
 
-                        if let Some(result) = best_match {
-                            let person = result.person;
-                            let mut data = PeopleEnrichmentData::default();
-                            
-                            data.name = person.names.and_then(|mut n| if n.is_empty() { None } else { Some(n.remove(0)) }).and_then(|n| n.display_name);
-                            data.avatar_url = person.photos.and_then(|mut p| if p.is_empty() { None } else { Some(p.remove(0)) }).and_then(|p| p.url);
-                            
-                            if let Some(org) = person.organizations.and_then(|mut o| if o.is_empty() { None } else { Some(o.remove(0)) }) {
-                                data.job_title = org.title;
-                                data.company = org.name;
+                            if let Some(result) = best_match {
+                                let person = result.person;
+                                let mut data = PeopleEnrichmentData::default();
+                                
+                                data.name = person.names.and_then(|mut n| if n.is_empty() { None } else { Some(n.remove(0)) }).and_then(|n| n.display_name);
+                                data.avatar_url = person.photos.and_then(|mut p| if p.is_empty() { None } else { Some(p.remove(0)) }).and_then(|p| p.url);
+                                
+                                if let Some(org) = person.organizations.and_then(|mut o| if o.is_empty() { None } else { Some(o.remove(0)) }) {
+                                    data.job_title = org.title;
+                                    data.company = org.name;
+                                }
+                                
+                                data.bio = person.biographies.and_then(|mut b| if b.is_empty() { None } else { Some(b.remove(0)) }).and_then(|b| b.value);
+                                
+                                log::info!("Successfully enriched {} from Google Contacts search", address);
+                                return Ok(Some(data));
                             }
-                            
-                            data.bio = person.biographies.and_then(|mut b| if b.is_empty() { None } else { Some(b.remove(0)) }).and_then(|b| b.value);
-                            
-                            return Ok(Some(data));
                         }
+                    } else if status.as_u16() == 401 {
+                        log::warn!("Google People API token for {} failed with 401", account_email);
                     }
                 }
-                _ => continue, // Try next token if this one fails (e.g. 401)
+                Err(e) => {
+                    log::error!("Google People API request failed: {}", e);
+                    continue;
+                }
             }
         }
 
+        log::info!("Google People API enrichment returned no data for {}", address);
         Ok(None)
     }
 }

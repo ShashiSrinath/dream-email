@@ -14,12 +14,12 @@ pub async fn get_emails_by_sender<R: tauri::Runtime>(
     limit: u32,
 ) -> Result<Vec<Email>, String> {
     let pool = app_handle.state::<SqlitePool>();
-    
+
     let emails = sqlx::query_as::<_, Email>(
-        "SELECT id, account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags, snippet, has_attachments 
-         FROM emails 
-         WHERE sender_address = ? 
-         ORDER BY date DESC 
+        "SELECT id, account_id, folder_id, remote_id, message_id, subject, sender_name, sender_address, date, flags, snippet, has_attachments
+         FROM emails
+         WHERE sender_address = ?
+         ORDER BY date DESC
          LIMIT ?"
     )
     .bind(&address)
@@ -36,6 +36,7 @@ pub async fn get_sender_info<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     address: String,
 ) -> Result<Option<Sender>, String> {
+    log::info!("get_sender_info called for {}", address);
     let pool = app_handle.state::<SqlitePool>();
     
     let sender = sqlx::query_as::<_, Sender>("SELECT * FROM senders WHERE address = ?")
@@ -53,22 +54,25 @@ pub async fn get_sender_info<R: tauri::Runtime>(
         };
 
         if s.avatar_url.is_some() && !is_stale {
+            log::info!("Returning cached sender info for {}", address);
             return Ok(Some(s));
         }
+        log::info!("Sender info for {} is stale or missing avatar, re-enriching", address);
+    } else {
+        log::info!("Sender {} not found in DB, enriching", address);
     }
 
     // If not found or needs update, try enrichment
     let enriched = enrich_sender_internal(&app_handle, address).await?;
     Ok(Some(enriched))
 }
-
 #[tauri::command]
 pub async fn get_domain_info<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     domain: String,
 ) -> Result<Option<Domain>, String> {
     let pool = app_handle.state::<SqlitePool>();
-    
+
     let domain_info = sqlx::query_as::<_, Domain>("SELECT * FROM domains WHERE domain = ?")
         .bind(&domain)
         .fetch_optional(&*pool)
@@ -82,14 +86,15 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     address: String,
 ) -> Result<Sender, String> {
+    log::info!("Starting enrichment for {}", address);
     let pool = app_handle.state::<SqlitePool>();
-    
+
     let domain_name = extract_domain(&address);
     let mut avatar_url = None;
     let mut company = None;
-    
+
     // 0. Preliminary Domain Intelligence for system addresses
-    // If it's a corporate system address (e.g. noreply@linkedin.com), 
+    // If it's a corporate system address (e.g. noreply@linkedin.com),
     // we should prioritize the domain logo.
     if let Some(d) = &domain_name {
         if !is_common_provider(d) && is_system_address(&address) {
@@ -100,6 +105,8 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     let mut name = None;
     let mut bio = None;
     let mut location = None;
+    let mut job_title = None;
+    let mut ai_last_enriched_at = None;
     let mut github_handle = None;
     let mut twitter_handle = None;
     let mut linkedin_handle = None;
@@ -120,7 +127,56 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         name = n;
     }
 
-    // 1. Fetch Gravatar Profile for advanced metadata
+    // 1. People API Enrichment (Google, Microsoft, etc.)
+    // We try this first because it's highly accurate for people we actually interact with.
+    if !is_system_address(&address) {
+        if let Ok(manager) = AccountManager::new(app_handle).await {
+            if let Ok(registry) = manager.load().await {
+                // Collect Google tokens
+                let google_accounts: Vec<(String, String)> = registry.accounts.iter().filter_map(|a| {
+                    match a {
+                        crate::email_backend::accounts::manager::Account::Google(g) => {
+                            g.access_token.as_ref().map(|t| (g.email.clone(), t.clone()))
+                        }
+                    }
+                }).collect();
+
+                if !google_accounts.is_empty() {
+                    let google_provider = GooglePeopleProvider { accounts: google_accounts };
+                    match google_provider.enrich(&address).await {
+                        Ok(Some(people_data)) => {
+                            log::info!("Enriched {} using Google People API", address);
+                            if let Some(n) = people_data.name { name = Some(n); }
+                            if let Some(av) = people_data.avatar_url { avatar_url = Some(av); }
+                            if let Some(jt) = people_data.job_title { job_title = Some(jt); }
+                            if let Some(c) = people_data.company { company = Some(c); }
+                            if let Some(b) = people_data.bio { bio = Some(b); }
+                            if let Some(loc) = people_data.location { location = Some(loc); }
+                            is_personal_email = Some(true);
+                        }
+                        Ok(None) => {
+                            log::info!("Google People API returned no results for {}", address);
+                        }
+                        Err(e) => {
+                            log::error!("Google People API enrichment failed for {}: {}", address, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 1b. Google-specific profile photo fallback for Gmail addresses
+    if avatar_url.is_none() {
+        if let Some(d) = &domain_name {
+            if d == "gmail.com" || d == "googlemail.com" {
+                log::info!("Using Google profile photo fallback for {}", address);
+                avatar_url = Some(get_google_avatar_url(&address));
+            }
+        }
+    }
+
+    // 2. Fetch Gravatar Profile for advanced metadata
     let client = reqwest::Client::builder()
         .user_agent("DreamEmail/0.1.0")
         .build()
@@ -133,9 +189,13 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
                     if name.is_none() {
                         name = entry.display_name.clone();
                     }
-                    bio = entry.about_me.clone();
-                    location = entry.current_location.clone();
-                    
+                    if bio.is_none() {
+                        bio = entry.about_me.clone();
+                    }
+                    if location.is_none() {
+                        location = entry.current_location.clone();
+                    }
+
                     // Helper to extract handle from URL
                     let extract_handle = |u: &str| -> Option<String> {
                         u.trim_end_matches('/')
@@ -176,16 +236,16 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         }
     }
 
-    // 2. Domain Intelligence
+    // 3. Domain Intelligence
     if let Some(d) = &domain_name {
         if !is_common_provider(d) {
             let root_domain = get_root_domain(d);
             company = Some(root_domain.clone());
-            
+
             // Heuristic: Always update/insert domain info to ensure we use the latest provider (e.g. Google instead of Clearbit)
             let logo_url = get_favicon_url(&root_domain);
             let _ = sqlx::query(
-                "INSERT INTO domains (domain, logo_url, last_enriched_at) 
+                "INSERT INTO domains (domain, logo_url, last_enriched_at)
                  VALUES (?, ?, ?)
                  ON CONFLICT(domain) DO UPDATE SET
                     logo_url = excluded.logo_url,
@@ -199,14 +259,11 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         }
     }
 
-    // 3. AI Enrichment (optional and sparing)
+    // 4. AI Enrichment (optional and sparing)
     let ai_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiEnabled'")
         .fetch_one(&*pool)
         .await
         .unwrap_or(("false".to_string(),));
-    
-    let mut job_title = None;
-    let mut ai_last_enriched_at = None;
 
     // Check if we already have AI data to avoid redundant calls
     let existing_ai_data: Option<(Option<String>, Option<chrono::DateTime<Utc>>)> = sqlx::query_as(
@@ -217,9 +274,11 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
     .await
     .unwrap_or(None);
 
+    log::info!("Ai enabled: {}", &ai_enabled.0);
+
     if ai_enabled.0 == "true" {
         let (existing_job, last_ai_run) = existing_ai_data.unwrap_or((None, None));
-        
+
         // Sparsity logic:
         // Run AI enrichment ONLY if:
         // 1. We have no job title yet
@@ -228,6 +287,8 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
             Some(last) => (Utc::now() - last).num_days() > 90,
             None => true,
         };
+
+        log::info!("Need ai running ai for : {}", &address);
 
         if needs_ai {
             // Fetch last 5 email snippets for this sender
@@ -242,8 +303,15 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
             if !snippets.is_empty() {
                 log::info!("Sparingly triggering AI enrichment for {}", address);
                 if let Ok(ai_data) = crate::email_backend::llm::enrichment::enrich_sender_with_ai(app_handle, &address, snippets).await {
-                    if let Some(jt) = ai_data["job_title"].as_str() {
-                        job_title = Some(jt.to_string());
+                    if name.is_none() {
+                        if let Some(n) = ai_data["name"].as_str() {
+                            name = Some(n.to_string());
+                        }
+                    }
+                    if job_title.is_none() {
+                        if let Some(jt) = ai_data["job_title"].as_str() {
+                            job_title = Some(jt.to_string());
+                        }
                     }
                     if let Some(c) = ai_data["company"].as_str() {
                         if company.is_none() {
@@ -255,8 +323,15 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
                             bio = Some(b.to_string());
                         }
                     }
-                    if let Some(is_personal) = ai_data["is_personal_email"].as_bool() {
-                        is_personal_email = Some(is_personal);
+                    if location.is_none() {
+                        if let Some(loc) = ai_data["location"].as_str() {
+                            location = Some(loc.to_string());
+                        }
+                    }
+                    if is_personal_email.is_none() {
+                        if let Some(is_personal) = ai_data["is_personal_email"].as_bool() {
+                            is_personal_email = Some(is_personal);
+                        }
                     }
                     if let Some(is_automated) = ai_data["is_automated_mailer"].as_bool() {
                         is_automated_mailer = Some(is_automated);
@@ -270,55 +345,6 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         }
     }
 
-    // 4. People API Enrichment (Google, Microsoft, etc.)
-    // Only run if it's potentially a personal email
-    let is_likely_personal = is_personal_email.unwrap_or_else(|| {
-        domain_name.as_ref().map_or(false, |d| is_common_provider(d)) && !is_system_address(&address)
-    });
-
-    if is_likely_personal {
-        if let Ok(manager) = AccountManager::new(app_handle).await {
-            if let Ok(registry) = manager.load().await {
-                // Collect Google tokens
-                let google_tokens: Vec<String> = registry.accounts.iter().filter_map(|a| {
-                    match a {
-                        crate::email_backend::accounts::manager::Account::Google(g) => g.access_token.clone(),
-                    }
-                }).collect();
-
-                if !google_tokens.is_empty() {
-                    let google_provider = GooglePeopleProvider { access_tokens: google_tokens };
-                    if let Ok(Some(people_data)) = google_provider.enrich(&address).await {
-                        log::info!("Enriched {} using Google People API", address);
-                        if let Some(n) = people_data.name { name = Some(n); }
-                        if let Some(av) = people_data.avatar_url { avatar_url = Some(av); }
-                        if let Some(jt) = people_data.job_title { job_title = Some(jt); }
-                        if let Some(c) = people_data.company { company = Some(c); }
-                        if let Some(b) = people_data.bio { bio = Some(b); }
-                        if let Some(loc) = people_data.location { location = Some(loc); }
-                        is_personal_email = Some(true);
-                    }
-                }
-
-                // Collect Microsoft tokens (Placeholder for future)
-                let microsoft_tokens: Vec<String> = Vec::new(); // TODO: Implement Microsoft account type
-                if !microsoft_tokens.is_empty() {
-                    let microsoft_provider = MicrosoftPeopleProvider { access_tokens: microsoft_tokens };
-                    if let Ok(Some(people_data)) = microsoft_provider.enrich(&address).await {
-                        log::info!("Enriched {} using Microsoft People API", address);
-                        if let Some(n) = people_data.name { name = Some(n); }
-                        if let Some(av) = people_data.avatar_url { avatar_url = Some(av); }
-                        if let Some(jt) = people_data.job_title { job_title = Some(jt); }
-                        if let Some(c) = people_data.company { company = Some(c); }
-                        if let Some(b) = people_data.bio { bio = Some(b); }
-                        if let Some(loc) = people_data.location { location = Some(loc); }
-                        is_personal_email = Some(true);
-                    }
-                }
-            }
-        }
-    }
-
     // 5. Final Fallback: Gravatar if still no avatar found
     if avatar_url.is_none() {
         avatar_url = Some(get_gravatar_url(&address));
@@ -326,7 +352,7 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
 
     let now = Utc::now();
     let is_verified = github_handle.is_some() || twitter_handle.is_some() || linkedin_handle.is_some();
-    
+
     let sender = Sender {
         address: address.clone(),
         name,
@@ -350,8 +376,8 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
 
     sqlx::query(
         "INSERT INTO senders (
-            address, name, avatar_url, job_title, company, bio, location, 
-            github_handle, twitter_handle, linkedin_handle, website_url, 
+            address, name, avatar_url, job_title, company, bio, location,
+            github_handle, twitter_handle, linkedin_handle, website_url,
             is_verified, is_personal_email, is_automated_mailer, ai_last_enriched_at, last_enriched_at
          )
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -398,14 +424,14 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
 
 pub async fn proactive_enrichment<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<(), String> {
     let pool = app_handle.state::<SqlitePool>();
-    
+
     // Find unique senders from emails that are NOT in senders table OR have no avatar OR use the old Clearbit provider
     let addresses: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT e.sender_address 
-         FROM emails e 
-         LEFT JOIN senders s ON e.sender_address = s.address 
-         WHERE s.address IS NULL 
-            OR s.avatar_url IS NULL 
+        "SELECT DISTINCT e.sender_address
+         FROM emails e
+         LEFT JOIN senders s ON e.sender_address = s.address
+         WHERE s.address IS NULL
+            OR s.avatar_url IS NULL
             OR s.avatar_url LIKE '%clearbit.com%'
          LIMIT 100" // Process in batches to avoid overwhelming APIs
     )
