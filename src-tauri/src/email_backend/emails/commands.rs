@@ -289,59 +289,68 @@ pub async fn get_thread_emails<R: tauri::Runtime>(
 pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<EmailContent, String> {
     let pool = app_handle.state::<SqlitePool>().inner().clone();
     
-    let cached_info: Option<(Option<String>, Option<String>, Option<String>, i64)> = sqlx::query_as(
-        "SELECT body_text, body_html, summary, account_id FROM emails WHERE id = ?"
+    let cached_info: Option<(Option<String>, Option<String>, Option<String>, bool, i64)> = sqlx::query_as(
+        "SELECT body_text, body_html, summary, has_attachments, account_id FROM emails WHERE id = ?"
     )
     .bind(email_id)
     .fetch_optional(&pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    if let Some((body_text, body_html, summary, _account_id)) = cached_info {
+    if let Some((body_text, body_html, summary, has_attachments, _account_id)) = cached_info {
         if body_text.is_some() || body_html.is_some() {
-            // Content exists, check if we need to trigger summarization
-            if summary.is_none() && body_text.is_some() {
-                let text = body_text.clone().unwrap();
-                let handle = app_handle.clone();
-                let pool_clone = pool.clone();
-                
-                tauri::async_runtime::spawn(async move {
-                    let ai_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiEnabled'")
-                        .fetch_one(&pool_clone)
-                        .await
-                        .unwrap_or(("false".to_string(),));
-                    
-                    let ai_summarization_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiSummarizationEnabled'")
-                        .fetch_one(&pool_clone)
-                        .await
-                        .unwrap_or(("false".to_string(),));
+            // Check if we have attachments if we expect them
+             let attachment_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE email_id = ?")
+                 .bind(email_id)
+                 .fetch_one(&pool)
+                 .await
+                 .unwrap_or(0);
 
-                    if ai_enabled.0 == "true" && ai_summarization_enabled.0 == "true" {
-                        // Check folder role
-                        let role: Option<String> = sqlx::query_scalar("SELECT f.role FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?")
-                            .bind(email_id)
+             if !has_attachments || attachment_count > 0 {
+                // Content exists, check if we need to trigger summarization
+                if summary.is_none() && body_text.is_some() {
+                    let text = body_text.clone().unwrap();
+                    let handle = app_handle.clone();
+                    let pool_clone = pool.clone();
+                    
+                    tauri::async_runtime::spawn(async move {
+                        let ai_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiEnabled'")
                             .fetch_one(&pool_clone)
                             .await
-                            .unwrap_or(None);
+                            .unwrap_or(("false".to_string(),));
+                        
+                        let ai_summarization_enabled: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'aiSummarizationEnabled'")
+                            .fetch_one(&pool_clone)
+                            .await
+                            .unwrap_or(("false".to_string(),));
 
-                        if role.as_deref() != Some("spam") && role.as_deref() != Some("trash") {
-                            if let Ok(s) = crate::email_backend::llm::summarization::summarize_email_with_ai(&handle, email_id, &text).await {
-                                let _ = sqlx::query("UPDATE emails SET summary = ? WHERE id = ?")
-                                    .bind(s)
-                                    .bind(email_id)
-                                    .execute(&pool_clone)
-                                    .await;
-                                let _ = handle.emit("emails-updated", ());
+                        if ai_enabled.0 == "true" && ai_summarization_enabled.0 == "true" {
+                            // Check folder role
+                            let role: Option<String> = sqlx::query_scalar("SELECT f.role FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?")
+                                .bind(email_id)
+                                .fetch_one(&pool_clone)
+                                .await
+                                .unwrap_or(None);
+
+                            if role.as_deref() != Some("spam") && role.as_deref() != Some("trash") {
+                                if let Ok(s) = crate::email_backend::llm::summarization::summarize_email_with_ai(&handle, email_id, &text).await {
+                                    let _ = sqlx::query("UPDATE emails SET summary = ? WHERE id = ?")
+                                        .bind(s)
+                                        .bind(email_id)
+                                        .execute(&pool_clone)
+                                        .await;
+                                    let _ = handle.emit("emails-updated", ());
+                                }
                             }
                         }
-                    }
+                    });
+                }
+
+                return Ok(EmailContent {
+                    body_text,
+                    body_html,
                 });
             }
-
-            return Ok(EmailContent {
-                body_text,
-                body_html,
-            });
         }
     }
 
@@ -438,19 +447,37 @@ pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R
         .map_err(|e| e.to_string())?;
 
     if let Ok(attachments) = message.attachments() {
-        for att in attachments {
-            sqlx::query(
-                "INSERT INTO attachments (email_id, filename, mime_type, size, data)
-                 VALUES (?, ?, ?, ?, ?)"
-            )
-            .bind(email_id)
-            .bind(&att.filename)
-            .bind(&att.mime)
-            .bind(att.body.len() as i64)
-            .bind(&att.body)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        if attachments.is_empty() {
+             // If we expected attachments but found none (and we are here because of that), 
+             // update the flag to avoid re-fetching loop.
+             // We only want to do this if we were expecting attachments. 
+             // But checking "has_attachments" here from the initial SELECT is hard as variables are in different scope.
+             // However, it's safe to set it to false if we found none.
+             let _ = sqlx::query("UPDATE emails SET has_attachments = false WHERE id = ?")
+                 .bind(email_id)
+                 .execute(&mut *tx)
+                 .await;
+        } else {
+            sqlx::query("UPDATE emails SET has_attachments = true WHERE id = ?")
+                .bind(email_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            for att in attachments {
+                sqlx::query(
+                    "INSERT INTO attachments (email_id, filename, mime_type, size, data)
+                     VALUES (?, ?, ?, ?, ?)"
+                )
+                .bind(email_id)
+                .bind(&att.filename)
+                .bind(&att.mime)
+                .bind(att.body.len() as i64)
+                .bind(&att.body)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -881,8 +908,8 @@ mod tests {
         let folder_id = row.0;
 
         let row: (i64,) = sqlx::query_as(
-            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, sender_address, recipient_to, date, flags, body_text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
+            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, sender_address, recipient_to, date, flags, body_text, has_attachments)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
         )
         .bind(account_id)
         .bind(folder_id)
@@ -895,6 +922,7 @@ mod tests {
         .bind(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .bind("[\"seen\"]")
         .bind("Hello content")
+        .bind(false)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -928,8 +956,8 @@ mod tests {
 
         // Insert another email with \"Re: Test Subject\" from same sender
         sqlx::query(
-            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, normalized_subject, sender_address, recipient_to, date, flags)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, subject, normalized_subject, sender_address, recipient_to, date, flags, has_attachments)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(account_id)
         .bind(folder_id)
@@ -942,6 +970,7 @@ mod tests {
         .bind("test@example.com")
         .bind(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .bind("[]")
+        .bind(false)
         .execute(&pool)
         .await
         .unwrap();

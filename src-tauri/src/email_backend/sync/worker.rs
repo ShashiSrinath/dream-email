@@ -183,6 +183,24 @@ impl<R: tauri::Runtime> SyncWorker<R> {
                 match backend.get_messages(&folder_path, &uids).await {
                     Ok(messages) => {
                         for message in messages.to_vec() {
+                            // Save attachments if any
+                            if let Ok(attachments) = message.attachments() {
+                                for att in attachments {
+                                    let _ = sqlx::query(
+                                        "INSERT INTO attachments (email_id, filename, mime_type, size, data)
+                                         VALUES (?, ?, ?, ?, ?)"
+                                    )
+                                    .bind(email_id)
+                                    .bind(&att.filename)
+                                    .bind(&att.mime)
+                                    .bind(att.body.len() as i64)
+                                    .bind(&att.body)
+                                    .execute(&*pool)
+                                    .await
+                                    .map_err(|e| error!("Failed to save attachment for email {}: {}", email_id, e));
+                                }
+                            }
+
                             if let Ok(parsed) = message.parsed() {
                                 let parsed: &mail_parser::Message = parsed;
                                 let body_text: Option<String> = parsed.body_text(0).map(|b| b.to_string());

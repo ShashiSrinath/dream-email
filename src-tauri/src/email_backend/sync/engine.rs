@@ -224,11 +224,12 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             let recipient_to = Some(env.to.addr.clone());
 
             let res = sqlx::query(
-                "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, in_reply_to, references_header, subject, normalized_subject, sender_name, sender_address, recipient_to, date, flags)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "INSERT INTO emails (account_id, folder_id, remote_id, message_id, thread_id, in_reply_to, references_header, subject, normalized_subject, sender_name, sender_address, recipient_to, date, flags, has_attachments)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(folder_id, remote_id) DO UPDATE SET
                     flags=excluded.flags,
-                    recipient_to=COALESCE(emails.recipient_to, excluded.recipient_to)"
+                    recipient_to=COALESCE(emails.recipient_to, excluded.recipient_to),
+                    has_attachments=excluded.has_attachments"
             )
             .bind(account_id)
             .bind(folder_id)
@@ -244,6 +245,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             .bind(recipient_to)
             .bind(&date_str)
             .bind(serde_json::to_string(&flags).unwrap_or_default())
+            .bind(env.has_attachment)
             .execute(&*pool)
             .await;
 
@@ -573,5 +575,63 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::test_utils::setup_test_db;
+    use tauri::test::mock_builder;
+    use email::envelope::{Envelope, Envelopes, Address};
+    use chrono::Utc;
+    use tauri::Manager;
+
+    #[tokio::test]
+    async fn test_save_envelopes_saves_has_attachments() {
+        let pool = setup_test_db().await;
+        
+        let row: (i64,) = sqlx::query_as("INSERT INTO accounts (email, account_type) VALUES (?, ?) RETURNING id")
+            .bind("test@example.com")
+            .bind("google")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let account_id = row.0;
+
+        let row: (i64,) = sqlx::query_as("INSERT INTO folders (account_id, name, path, role) VALUES (?, ?, ?, ?) RETURNING id")
+            .bind(account_id)
+            .bind("Inbox")
+            .bind("INBOX")
+            .bind("inbox")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let folder_id = row.0;
+
+        let mut envelope = Envelope::default();
+        envelope.id = "1".to_string();
+        envelope.message_id = "<msg1@example.com>".to_string();
+        envelope.subject = "Test Subject".to_string();
+        envelope.from = Address::new(Some("Sender".to_string()), "sender@example.com".to_string());
+        envelope.to = Address::new(Some("Me".to_string()), "test@example.com".to_string());
+        envelope.date = Utc::now().with_timezone(&chrono::FixedOffset::east_opt(0).unwrap());
+        envelope.has_attachment = true;
+
+        let envelopes: Envelopes = vec![envelope].into_iter().collect();
+
+        let app = mock_builder().build(tauri::generate_context!()).unwrap();
+        app.manage(pool.clone());
+
+        SyncEngine::save_envelopes(&app.handle(), account_id, folder_id, envelopes, false)
+            .await
+            .expect("Failed to save envelopes");
+
+        let has_attachments: bool = sqlx::query_scalar("SELECT has_attachments FROM emails WHERE remote_id = '1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert!(has_attachments, "has_attachments should be true");
     }
 }
