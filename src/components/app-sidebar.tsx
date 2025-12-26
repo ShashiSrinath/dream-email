@@ -17,15 +17,13 @@ import {
   PenLine,
   Send,
   ShieldAlert,
-  LayoutGrid,
+  FilePen,
 } from "lucide-react";
 import { Link, useSearch } from "@tanstack/react-router";
-import { Gmail } from "@/components/ui/svgs/gmail";
 import { useEmailStore } from "@/lib/store";
 import { EmailComposer } from "./email-composer/email-composer";
 
 export function AppSidebar() {
-  const accounts = useEmailStore((state) => state.accounts);
   const unifiedCounts = useEmailStore((state) => state.unifiedCounts);
   const search = useSearch({ strict: false }) as any;
   const composer = useEmailStore((state) => state.composer);
@@ -116,6 +114,21 @@ export function AppSidebar() {
                   >
                     <Send className="w-4 h-4" />
                     <span>Sent</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={search.view === "drafts"}>
+                  <Link
+                    to="/"
+                    search={{
+                      account_id: search.account_id,
+                      view: "drafts",
+                      filter: undefined,
+                    }}
+                  >
+                    <FilePen className="w-4 h-4" />
+                    <span>Drafts</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

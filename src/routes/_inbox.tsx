@@ -39,6 +39,7 @@ export function InboxLayout() {
   const toggleSelectAll = useEmailStore((state) => state.toggleSelectAll);
   const markAsRead = useEmailStore((state) => state.markAsRead);
   const moveToTrash = useEmailStore((state) => state.moveToTrash);
+  const archiveEmails = useEmailStore((state) => state.archiveEmails);
 
   const isAllSelected = emails.length > 0 && selectedIds.size === emails.length;
   const isSomeSelected =
@@ -95,7 +96,7 @@ export function InboxLayout() {
         {selectedIds.size > 0 && (
           <EmailListActions
             selectedCount={selectedIds.size}
-            onArchive={() => console.log("Archive", Array.from(selectedIds))}
+            onArchive={() => archiveEmails(Array.from(selectedIds))}
             onDelete={() => moveToTrash(Array.from(selectedIds))}
             onMarkAsRead={() => markAsRead(Array.from(selectedIds))}
             onLabel={() => console.log("Label", Array.from(selectedIds))}

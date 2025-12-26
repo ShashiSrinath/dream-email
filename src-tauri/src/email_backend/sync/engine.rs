@@ -560,6 +560,10 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 Some("sent".to_string())
             } else if name_lower.contains("spam") || name_lower.contains("junk") {
                 Some("spam".to_string())
+            } else if name_lower.contains("trash") || name_lower.contains("bin") || name_lower.contains("deleted") {
+                Some("trash".to_string())
+            } else if name_lower.contains("archive") || name_lower.contains("all mail") {
+                Some("archive".to_string())
             } else {
                 // Ignore all other folders for the revamped inbox
                 continue;
