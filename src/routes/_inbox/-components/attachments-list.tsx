@@ -21,11 +21,12 @@ export function AttachmentsList({ attachments }: { attachments: Attachment[] }) 
 
       if (!filePath) return;
 
-      const data = await invoke<number[]>("get_attachment_data", {
+      await invoke("save_attachment_to_path", {
         attachmentId: att.id,
+        path: filePath,
       });
       
-      await writeFile(filePath, new Uint8Array(data));
+      console.log("Saved attachment to:", filePath);
     } catch (error) {
       console.error("Failed to download attachment:", error);
     }
@@ -33,17 +34,9 @@ export function AttachmentsList({ attachments }: { attachments: Attachment[] }) 
 
   const openAttachment = async (att: Attachment) => {
     try {
-      const data = await invoke<number[]>("get_attachment_data", {
+      await invoke("open_attachment", {
         attachmentId: att.id,
       });
-      
-      const temp = await tempDir();
-      const filename = att.filename || `attachment-${att.id}`;
-      const filePath = await join(temp, filename);
-      
-      await writeFile(filePath, new Uint8Array(data));
-      console.log("Opening attachment at:", filePath);
-      await openPath(filePath);
     } catch (error) {
       console.error("Failed to open attachment:", error);
     }

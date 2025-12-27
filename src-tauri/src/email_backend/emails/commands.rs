@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 use serde::{Deserialize, Serialize};
 use crate::email_backend::accounts::manager::AccountManager;
 use crate::email_backend::sync::SyncEngine;
+use crate::utils::attachments::{save_attachment_data, read_attachment_data};
 use email::backend::BackendBuilder;
 use email::smtp::SmtpContextBuilder;
 use email::message::send::SendMessage;
@@ -472,14 +473,13 @@ pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R
 
             for att in attachments {
                 sqlx::query(
-                    "INSERT INTO attachments (email_id, filename, mime_type, size, data)
-                     VALUES (?, ?, ?, ?, ?)"
+                    "INSERT INTO attachments (email_id, filename, mime_type, size)
+                     VALUES (?, ?, ?, ?)"
                 )
                 .bind(email_id)
                 .bind(&att.filename)
                 .bind(&att.mime)
                 .bind(att.body.len() as i64)
-                .bind(&att.body)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -546,14 +546,14 @@ pub async fn save_draft<R: tauri::Runtime>(
 
     for att_id in attachment_ids {
         // Find the attachment (could be from another email or another draft)
-        let att: Option<(Option<String>, Option<String>, i64, Vec<u8>)> = sqlx::query_as("SELECT filename, mime_type, size, data FROM attachments WHERE id = ?")
+        let att: Option<(Option<String>, Option<String>, i64, Option<String>)> = sqlx::query_as("SELECT filename, mime_type, size, file_hash FROM attachments WHERE id = ?")
             .bind(att_id)
             .fetch_optional(&*pool)
             .await
             .map_err(|e| e.to_string())?;
 
         if let Some(a) = att {
-            sqlx::query("INSERT INTO attachments (draft_id, filename, mime_type, size, data) VALUES (?, ?, ?, ?, ?)")
+            sqlx::query("INSERT INTO attachments (draft_id, filename, mime_type, size, file_hash) VALUES (?, ?, ?, ?, ?)")
                 .bind(draft_id)
                 .bind(a.0)
                 .bind(a.1)
@@ -588,7 +588,7 @@ pub async fn get_draft_by_id<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>,
         .await
         .map_err(|e| e.to_string())?;
     
-    let attachments = sqlx::query_as::<_, Attachment>("SELECT id, -1 as email_id, filename, mime_type, size FROM attachments WHERE draft_id = ?")
+    let attachments = sqlx::query_as::<_, Attachment>("SELECT id, email_id, draft_id, filename, mime_type, size, file_hash FROM attachments WHERE draft_id = ?")
         .bind(id)
         .fetch_all(&*pool)
         .await
@@ -918,16 +918,18 @@ pub async fn move_to_trash<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, e
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Attachment {
     pub id: i64,
-    pub email_id: i64,
+    pub email_id: Option<i64>,
+    pub draft_id: Option<i64>,
     pub filename: Option<String>,
     pub mime_type: Option<String>,
     pub size: i64,
+    pub file_hash: Option<String>,
 }
 
 #[tauri::command]
 pub async fn get_attachments<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_id: i64) -> Result<Vec<Attachment>, String> {
     let pool = app_handle.state::<SqlitePool>();
-    let attachments = sqlx::query_as::<_, Attachment>("SELECT id, email_id, filename, mime_type, size FROM attachments WHERE email_id = ?")
+    let attachments = sqlx::query_as::<_, Attachment>("SELECT id, email_id, draft_id, filename, mime_type, size, file_hash FROM attachments WHERE email_id = ?")
         .bind(email_id)
         .fetch_all(&*pool)
         .await
@@ -935,15 +937,139 @@ pub async fn get_attachments<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>,
     Ok(attachments)
 }
 
+async fn fetch_attachment_data_internal<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, attachment_id: i64) -> Result<Vec<u8>, String> {
+    let pool = app_handle.state::<SqlitePool>().inner().clone();
+    
+    // 1. Try to get cached data from file
+    let row: Option<(Option<String>, Option<i64>, Option<String>, Option<String>, i64)> = sqlx::query_as(
+        "SELECT file_hash, email_id, filename, mime_type, size FROM attachments WHERE id = ?"
+    )
+    .bind(attachment_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let (file_hash, email_id, filename, mime_type, size) = match row {
+        Some(r) => r,
+        None => return Err("Attachment not found".to_string()),
+    };
+
+    if let Some(hash) = file_hash {
+        if let Ok(data) = read_attachment_data(app_handle, &hash) {
+            return Ok(data);
+        }
+    }
+
+    let email_id = email_id.ok_or("Attachment has no associated email (might be a draft)")?;
+
+    // 2. Data is missing, fetch from server
+    let email_info: (i64, String, String) = sqlx::query_as(
+        "SELECT e.account_id, e.remote_id, f.path FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
+    )
+    .bind(email_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let (account_id, remote_id, folder_path) = email_info;
+    let engine = app_handle.state::<SyncEngine<R>>();
+    let context = engine.get_context(account_id).await?;
+
+    let mut client = context.client().await;
+    let id = Id::single(remote_id);
+    
+    use imap_client::imap_next::imap_types::fetch::MessageDataItemName;
+    use imap_client::imap_next::imap_types::fetch::MacroOrMessageDataItemNames;
+    let fetch_items = MacroOrMessageDataItemNames::MessageDataItemNames(vec![
+        MessageDataItemName::BodyExt {
+            section: None,
+            partial: None,
+            peek: true,
+        }
+    ]);
+    
+    client.examine_mailbox(&folder_path).await.map_err(|e| e.to_string())?;
+
+    use std::num::NonZeroU32;
+    use imap_client::imap_next::imap_types::sequence::Sequence;
+    let uids: imap_client::imap_next::imap_types::sequence::SequenceSet = id.iter()
+        .filter_map(|s| s.parse::<u32>().ok())
+        .filter_map(|n| NonZeroU32::new(n))
+        .map(Sequence::from)
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|e: imap_client::imap_next::imap_types::error::ValidationError| e.to_string())?;
+
+    let messages = client.fetch_messages_with_items(uids, fetch_items).await.map_err(|e| e.to_string())?;
+    let message = messages.first().ok_or("Email not found on server")?;
+
+    if let Ok(attachments) = message.attachments() {
+        for att in attachments {
+            // Match by filename, mime type and size for robustness.
+            if att.filename == filename && 
+               (mime_type.is_none() || att.mime == mime_type.as_ref().unwrap().as_str()) &&
+               att.body.len() as i64 == size {
+                
+                // Save to file system and get hash
+                let hash = save_attachment_data(app_handle, &att.body)?;
+                
+                // Update DB with hash
+                sqlx::query("UPDATE attachments SET file_hash = ? WHERE id = ?")
+                    .bind(&hash)
+                    .bind(attachment_id)
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                
+                return Ok(att.body);
+            }
+        }
+    }
+
+    Err("Attachment data not found in email message".to_string())
+}
+
 #[tauri::command]
 pub async fn get_attachment_data<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, attachment_id: i64) -> Result<Vec<u8>, String> {
-    let pool = app_handle.state::<SqlitePool>();
-    let row: (Vec<u8>,) = sqlx::query_as("SELECT data FROM attachments WHERE id = ?")
+    fetch_attachment_data_internal(&app_handle, attachment_id).await
+}
+
+#[tauri::command]
+pub async fn save_attachment_to_path<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, attachment_id: i64, path: String) -> Result<(), String> {
+    let data = fetch_attachment_data_internal(&app_handle, attachment_id).await?;
+    std::fs::write(path, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_attachment<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, attachment_id: i64) -> Result<(), String> {
+    let pool = app_handle.state::<SqlitePool>().inner().clone();
+    
+    // 1. Ensure we have the data
+    let data = fetch_attachment_data_internal(&app_handle, attachment_id).await?;
+    
+    // 2. Get filename
+    let filename: String = sqlx::query_scalar::<_, Option<String>>("SELECT filename FROM attachments WHERE id = ?")
         .bind(attachment_id)
-        .fetch_one(&*pool)
+        .fetch_one(&pool)
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(row.0)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| format!("attachment-{}", attachment_id));
+
+    // 3. Save to temp directory
+    let temp_dir = std::env::temp_dir();
+    let file_path = temp_dir.join(filename);
+    std::fs::write(&file_path, data).map_err(|e| e.to_string())?;
+    
+    // 4. Open with system handler
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", file_path.to_str().unwrap()]).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(file_path).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(file_path).spawn();
+    
+    Ok(())
 }
 
 #[tauri::command]
@@ -982,16 +1108,18 @@ pub async fn send_email<R: tauri::Runtime>(
     builder = builder.html_body(body);
 
     for id in attachment_ids {
-        let att_info: (Option<String>, Option<String>, Vec<u8>) = sqlx::query_as("SELECT filename, mime_type, data FROM attachments WHERE id = ?")
+        let att_info: (Option<String>, Option<String>) = sqlx::query_as("SELECT filename, mime_type FROM attachments WHERE id = ?")
             .bind(id)
             .fetch_one(&*pool)
             .await
             .map_err(|e| e.to_string())?;
         
+        let data = fetch_attachment_data_internal(&app_handle, id).await?;
+
         builder = builder.attachment(
             att_info.1.unwrap_or_else(|| "application/octet-stream".to_string()),
             att_info.0.unwrap_or_else(|| "attachment".to_string()),
-            att_info.2
+            data
         );
     }
 
