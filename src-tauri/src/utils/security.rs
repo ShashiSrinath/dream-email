@@ -14,7 +14,7 @@ pub struct EncryptedStore {
 impl EncryptedStore {
     pub async fn new() -> Result<Self, String> {
         let key_hex = tokio::task::spawn_blocking(|| {
-            let entry = Entry::new("dream-email", "master-key").map_err(|e| e.to_string())?;
+            let entry = Entry::new("dueam", "master-key").map_err(|e| e.to_string())?;
             
             match entry.get_password() {
                 Ok(k) => Ok(k),

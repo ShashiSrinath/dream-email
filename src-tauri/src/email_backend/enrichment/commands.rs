@@ -197,7 +197,7 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
 
     // 2. Fetch Gravatar Profile for advanced metadata
     let client = reqwest::Client::builder()
-        .user_agent("DreamEmail/0.1.0")
+        .user_agent("Dueam/0.1.0")
         .build()
         .map_err(|e| e.to_string())?;
 

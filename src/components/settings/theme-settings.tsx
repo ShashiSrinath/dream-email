@@ -26,9 +26,9 @@ export function ThemeSettings() {
     <Card>
       <CardHeader>
         <CardTitle>Theme</CardTitle>
-        <CardDescription>
-          Choose how Dream Email looks on your device.
-        </CardDescription>
+      <p className="text-sm text-muted-foreground">
+        Choose how Dueam looks on your device.
+      </p>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="grid grid-cols-3 gap-4">

@@ -140,11 +140,9 @@ function RouteComponent() {
             </div>
             <div className="space-y-1">
               <p className="font-semibold">Your data is secure</p>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Dream Email uses industry-standard OAuth2 for Google accounts.
-                We never see your password, and your tokens are stored securely
-                in your system's encrypted keychain.
-              </p>
+            <p className="text-sm text-muted-foreground text-center">
+              Dueam uses industry-standard OAuth2 for Google accounts.
+            </p>
             </div>
           </div>
         </div>

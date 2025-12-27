@@ -71,9 +71,9 @@ export function OnboardingComponent() {
                     <Mail className="w-16 h-16 text-primary" />
                   </div>
                 </div>
-                <h1 className="text-5xl font-extrabold tracking-tight">
-                  Welcome to Dream Email
-                </h1>
+              <h1 className="text-3xl font-bold tracking-tight">
+                Welcome to Dueam
+              </h1>
                 <p className="text-xl text-muted-foreground max-w-lg mx-auto">
                   The modern, lightning-fast desktop email client designed for
                   power users.

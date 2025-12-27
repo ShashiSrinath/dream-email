@@ -75,7 +75,7 @@ const RootLayout = () => {
             <Mail className="w-12 h-12" />
           </div>
           <div className="space-y-2 text-center">
-            <h1 className="text-2xl font-bold tracking-tight">Dream Email</h1>
+            <h1 className="text-2xl font-bold tracking-tight">Dueam</h1>
             <div className="flex gap-1 justify-center">
               <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]"></span>
               <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]"></span>

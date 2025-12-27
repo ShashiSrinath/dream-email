@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import tanstackRouter from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path";
+import svgr from "vite-plugin-svgr";
 
 
 const host = process.env.TAURI_DEV_HOST;
@@ -15,8 +16,15 @@ export default defineConfig(async () => ({
       target: "react",
       autoCodeSplitting: true,
     }),
+    svgr({
+      include: "**/*.svg?react",
+      svgrOptions: {
+        icon: true,
+        replaceAttrValues: { "#346ECD": "currentColor" },
+      },
+    }),
     react(),
-    tailwindcss()
+    tailwindcss(),
   ],
   resolve: {
     alias: {

@@ -1,5 +1,5 @@
 {
-  "name": "dream-email",
+  "name": "dueam",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -78,6 +78,7 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.17",
     "vaul": "^1.1.2",
+    "vite-plugin-svgr": "^4.5.0",
     "zod": "^4.1.12",
     "zustand": "^5.0.9"
   },

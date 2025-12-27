@@ -15,7 +15,7 @@ describe("OnboardingComponent", () => {
   it("renders welcome step initially", () => {
     render(<OnboardingComponent />);
     const screen = within(document.body);
-    expect(screen.getByText("Welcome to Dream Email")).toBeInTheDocument();
+    expect(screen.getByText("Welcome to Dueam")).toBeInTheDocument();
     expect(screen.getByText("Unified Inbox")).toBeInTheDocument();
   });
 
@@ -24,7 +24,7 @@ describe("OnboardingComponent", () => {
     const screen = within(document.body);
 
     // Step 0: Welcome
-    expect(screen.getByText("Welcome to Dream Email")).toBeInTheDocument();
+    expect(screen.getByText("Welcome to Dueam")).toBeInTheDocument();
     const nextButton = screen.getByText("Next");
     fireEvent.click(nextButton);
 

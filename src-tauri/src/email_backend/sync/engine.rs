@@ -456,7 +456,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         let account_id = account.id().ok_or("Account ID missing")?;
         let pool = app_handle.state::<SqlitePool>();
 
-        let dev_mode = std::env::var("DREAM_EMAIL_DEV_MODE")
+        let dev_mode = std::env::var("DUEAM_DEV_MODE")
             .map(|v| v == "true")
             .unwrap_or(false);
 

@@ -1,6 +1,6 @@
-# Dream Email - Development Plan
+# Dueam - Development Plan
 
-Dream Email is a modern, high-performance desktop email client built with Tauri, Rust, and React. The core philosophy is to provide a seamless, unified experience for users managing multiple email accounts.
+Dueam is a modern, high-performance desktop email client built with Tauri, Rust, and React. The core philosophy is to provide a seamless, unified experience for users managing multiple email accounts.
 
 ## Core Objective
 

@@ -22,7 +22,7 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout))
                 .level(log::LevelFilter::Warn)
-                .level_for("dream_email_lib", log::LevelFilter::Info)
+                .level_for("dueam_lib", log::LevelFilter::Info)
                 .level_for("langchain_rust", log::LevelFilter::Warn)
                 .level_for("reqwest", log::LevelFilter::Warn)
                 .level_for("sqlx", log::LevelFilter::Warn)
@@ -46,7 +46,7 @@ pub fn run() {
 
             // Tray Icon Setup
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let show_i = MenuItem::with_id(app, "show", "Show Dream Email", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Show Dueam", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
 
             let _tray = TrayIconBuilder::new()

@@ -12,13 +12,14 @@ import {
 } from "@/components/ui/sidebar";
 import {
   Inbox,
-  Mail,
   Settings,
   PenLine,
   Send,
   ShieldAlert,
   FilePen,
 } from "lucide-react";
+// @ts-ignore
+import DueamIcon from "@/assets/dueam-icon.svg?react"
 import { Link, useSearch } from "@tanstack/react-router";
 import { useEmailStore } from "@/lib/store";
 import { EmailComposer } from "./email-composer/email-composer";
@@ -33,10 +34,10 @@ export function AppSidebar() {
     <Sidebar variant="inset">
       <SidebarHeader className="p-4 border-b border-sidebar-border h-16 justify-center">
         <div className="flex items-center gap-2 font-bold text-xl">
-          <div className="bg-primary text-primary-foreground p-1 rounded-lg">
-            <Mail className="w-6 h-6" />
+          <div className=" text-primary-foreground p-1 rounded-lg">
+            <DueamIcon className="text-primary w-12 h-12" />
           </div>
-          <span>Dream Email</span>
+          <span>Dueam</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
@@ -156,8 +157,6 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border">
         <SidebarMenu>
