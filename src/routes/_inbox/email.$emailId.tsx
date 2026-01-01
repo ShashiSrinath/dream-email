@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { useEmailStore, Email } from "@/lib/store";
+import { EmailEvent } from "@/hooks/use-emails";
 import { SenderSidebar } from "./-components/sender-sidebar";
 import { ThreadMessage } from "./-components/thread-message";
 
@@ -44,6 +45,11 @@ export function ThreadView() {
   const moveToInbox = useEmailStore((state) => state.moveToInbox);
 
   const offsetRef = useRef(0);
+  const threadEmailsRef = useRef<Email[]>([]);
+
+  useEffect(() => {
+    threadEmailsRef.current = threadEmails;
+  }, [threadEmails]);
 
   const displaySubject = useMemo(
     () => normalizeSubject(email.subject),
@@ -79,19 +85,37 @@ export function ThreadView() {
 
   useEffect(() => {
     fetchThread(0, false);
+  }, [fetchThread]);
 
+  useEffect(() => {
     // Listen for updates to refresh summaries/flags
-    const unlistenPromise = listen("emails-updated", () => {
-      // Refresh current emails in thread to get updated summaries
-      // Fetch everything up to the current offset to avoid losing messages
-      const currentLimit = offsetRef.current + THREAD_PAGE_SIZE;
-      fetchThread(0, false, currentLimit);
+    const unlistenPromise = listen<EmailEvent | any>("emails-updated", (event) => {
+      if (event.payload && typeof event.payload === 'object' && 'type' in event.payload) {
+        const emailEvent = event.payload as EmailEvent;
+        
+        // Only refresh if the affected email is in our current threadEmails list
+        const isRelevant = 
+          (emailEvent.type === "email-updated" && threadEmailsRef.current.some(e => e.id === emailEvent.payload.id)) ||
+          (emailEvent.type === "emails-updated-bulk" && threadEmailsRef.current.some(e => emailEvent.payload.ids.includes(e.id))) ||
+          (emailEvent.type === "email-removed" && threadEmailsRef.current.some(e => e.id === emailEvent.payload.id)) ||
+          (emailEvent.type === "emails-removed-bulk" && threadEmailsRef.current.some(e => emailEvent.payload.ids.includes(e.id))) ||
+          (emailEvent.type === "email-added" && emailEvent.payload.thread_id === email.thread_id);
+
+        if (isRelevant) {
+          const currentLimit = offsetRef.current + THREAD_PAGE_SIZE;
+          fetchThread(0, false, currentLimit);
+        }
+      } else {
+        // Fallback for non-granular events
+        const currentLimit = offsetRef.current + THREAD_PAGE_SIZE;
+        fetchThread(0, false, currentLimit);
+      }
     });
 
     return () => {
       unlistenPromise.then(unlisten => unlisten());
     };
-  }, [fetchThread]);
+  }, [fetchThread, email.thread_id]);
 
   const loadMore = () => {
     if (loading || !hasMore) return;

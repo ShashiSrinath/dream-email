@@ -1,3 +1,4 @@
+use crate::email_backend::emails::events::EmailEvent;
 use tauri::{Manager, Emitter};
 use log::info;
 use sqlx::SqlitePool;
@@ -17,7 +18,7 @@ use mail_builder::MessageBuilder;
 use imap_client::imap_next::imap_types::sequence::Sequence;
 use imap_client::imap_next::imap_types::error::ValidationError;
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Email {
     pub id: i64,
     pub account_id: i64,
@@ -95,7 +96,8 @@ pub async fn get_emails<R: tauri::Runtime>(
     view: Option<String>,
     filter: Option<String>,
     limit: Option<u32>,
-    offset: Option<u32>,
+    before_date: Option<String>,
+    before_id: Option<i64>,
 ) -> Result<Vec<Email>, String> {
     let pool = app_handle.state::<SqlitePool>();
     
@@ -159,10 +161,20 @@ pub async fn get_emails<R: tauri::Runtime>(
         };
     }
 
+    // Keyset Pagination
+    if let (Some(date), Some(id)) = (before_date, before_id) {
+        if !has_where { query_builder.push(" WHERE "); } else { query_builder.push(" AND "); }
+        query_builder.push(" (e.date < ");
+        query_builder.push_bind(date.clone());
+        query_builder.push(" OR (e.date = ");
+        query_builder.push_bind(date);
+        query_builder.push(" AND e.id < ");
+        query_builder.push_bind(id);
+        query_builder.push("))");
+    }
+
     query_builder.push(" ORDER BY e.date DESC, e.id DESC LIMIT ");
     query_builder.push_bind(limit.unwrap_or(100) as i64);
-    query_builder.push(" OFFSET ");
-    query_builder.push_bind(offset.unwrap_or(0) as i64);
 
     let emails = query_builder
         .build_query_as::<Email>()
@@ -341,12 +353,24 @@ pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R
 
                             if role.as_deref() != Some("spam") && role.as_deref() != Some("trash") {
                                 if let Ok(s) = crate::email_backend::llm::summarization::summarize_email_with_ai(&handle, email_id, &text, false).await {
+                                    let sender_address: Option<String> = sqlx::query_scalar("SELECT sender_address FROM emails WHERE id = ?")
+                                        .bind(email_id)
+                                        .fetch_one(&pool_clone)
+                                        .await
+                                        .ok();
+
                                     let _ = sqlx::query("UPDATE emails SET summary = ? WHERE id = ?")
-                                        .bind(s)
+                                        .bind(&s)
                                         .bind(email_id)
                                         .execute(&pool_clone)
                                         .await;
-                                    let _ = handle.emit("emails-updated", ());
+                                    let _ = handle.emit("emails-updated", EmailEvent::Updated {
+                                        id: email_id,
+                                        address: sender_address,
+                                        flags: None,
+                                        summary: Some(s),
+                                        thread_count: None,
+                                    });
                                 }
                             }
                         }
@@ -432,12 +456,24 @@ pub async fn get_email_content<R: tauri::Runtime>(app_handle: tauri::AppHandle<R
 
             if ai_enabled.0 == "true" && ai_summarization_enabled.0 == "true" && folder_role_clone.as_deref() != Some("spam") && folder_role_clone.as_deref() != Some("trash") {
                 if let Ok(s) = crate::email_backend::llm::summarization::summarize_email_with_ai(&handle, email_id, &text, false).await {
+                    let sender_address: Option<String> = sqlx::query_scalar("SELECT sender_address FROM emails WHERE id = ?")
+                        .bind(email_id)
+                        .fetch_one(&pool_clone)
+                        .await
+                        .ok();
+
                     let _ = sqlx::query("UPDATE emails SET summary = ? WHERE id = ?")
-                        .bind(s)
+                        .bind(&s)
                         .bind(email_id)
                         .execute(&pool_clone)
                         .await;
-                    let _ = handle.emit("emails-updated", ());
+                    let _ = handle.emit("emails-updated", EmailEvent::Updated {
+                        id: email_id,
+                        address: sender_address,
+                        flags: None,
+                        summary: Some(s),
+                        thread_count: None,
+                    });
                 }
             }
         });
@@ -517,7 +553,19 @@ pub async fn regenerate_summary<R: tauri::Runtime>(app_handle: tauri::AppHandle<
         .await
         .map_err(|e| e.to_string())?;
 
-    let _ = app_handle.emit("emails-updated", ());
+    let sender_address: Option<String> = sqlx::query_scalar("SELECT sender_address FROM emails WHERE id = ?")
+        .bind(email_id)
+        .fetch_one(&*pool)
+        .await
+        .ok();
+
+    let _ = app_handle.emit("emails-updated", EmailEvent::Updated {
+        id: email_id,
+        address: sender_address,
+        flags: None,
+        summary: Some(summary.clone()),
+        thread_count: None,
+    });
     
     Ok(summary)
 }
@@ -639,17 +687,19 @@ pub async fn delete_draft<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, id
 #[tauri::command]
 pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_ids: Vec<i64>) -> Result<(), String> {
     let pool = app_handle.state::<SqlitePool>();
+    let mut actual_updated_ids = Vec::new();
+    let mut final_flags = String::new();
     
-    for email_id in email_ids {
-        let email_info: Option<(i64, String, String, String)> = sqlx::query_as(
-            "SELECT e.account_id, e.remote_id, f.path, e.flags FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
+    for &email_id in &email_ids {
+        let email_info: Option<(i64, String, String, String, String)> = sqlx::query_as(
+            "SELECT e.account_id, e.remote_id, f.path, e.flags, e.sender_address FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
         )
         .bind(email_id)
         .fetch_optional(&*pool)
         .await
         .map_err(|e| e.to_string())?;
 
-        let (account_id, remote_id, folder_path, current_flags) = match email_info {
+        let (account_id, remote_id, folder_path, current_flags, _sender_address) = match email_info {
             Some(info) => info,
             None => continue,
         };
@@ -671,8 +721,10 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
             flags.push("seen".to_string());
         }
 
+        final_flags = serde_json::to_string(&flags).unwrap_or_default();
+
         sqlx::query("UPDATE emails SET flags = ? WHERE id = ?")
-            .bind(serde_json::to_string(&flags).unwrap_or_default())
+            .bind(&final_flags)
             .bind(email_id)
             .execute(&mut *tx)
             .await
@@ -685,9 +737,16 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
             .map_err(|e| e.to_string())?;
 
         tx.commit().await.map_err(|e| e.to_string())?;
+        actual_updated_ids.push(email_id);
     }
 
-    let _ = app_handle.emit("emails-updated", ());
+    if !actual_updated_ids.is_empty() {
+        let _ = app_handle.emit("emails-updated", EmailEvent::UpdatedBulk {
+            ids: actual_updated_ids,
+            flags: Some(final_flags),
+        });
+    }
+
     Ok(())
 }
 
@@ -695,7 +754,7 @@ pub async fn mark_as_read<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, em
 pub async fn move_to_inbox<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_ids: Vec<i64>) -> Result<(), String> {
     let pool = app_handle.state::<SqlitePool>();
 
-    for email_id in email_ids {
+    for &email_id in &email_ids {
         let email_info: Option<(i64, String, i64, String)> = sqlx::query_as(
             "SELECT e.account_id, e.remote_id, e.folder_id, f.path FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
         )
@@ -770,7 +829,10 @@ pub async fn move_to_inbox<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, e
         tx.commit().await.map_err(|e| e.to_string())?;
     }
 
-    let _ = app_handle.emit("emails-updated", ());
+    if !email_ids.is_empty() {
+        let _ = app_handle.emit("emails-updated", EmailEvent::RemovedBulk { ids: email_ids });
+    }
+
     Ok(())
 }
 
@@ -778,7 +840,7 @@ pub async fn move_to_inbox<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, e
 pub async fn archive_emails<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_ids: Vec<i64>) -> Result<(), String> {
     let pool = app_handle.state::<SqlitePool>();
 
-    for email_id in email_ids {
+    for &email_id in &email_ids {
         let email_info: Option<(i64, String, i64, String)> = sqlx::query_as(
             "SELECT e.account_id, e.remote_id, e.folder_id, f.path FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
         )
@@ -853,7 +915,10 @@ pub async fn archive_emails<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, 
         tx.commit().await.map_err(|e| e.to_string())?;
     }
 
-    let _ = app_handle.emit("emails-updated", ());
+    if !email_ids.is_empty() {
+        let _ = app_handle.emit("emails-updated", EmailEvent::RemovedBulk { ids: email_ids });
+    }
+
     Ok(())
 }
 
@@ -861,7 +926,7 @@ pub async fn archive_emails<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, 
 pub async fn move_to_trash<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, email_ids: Vec<i64>) -> Result<(), String> {
     let pool = app_handle.state::<SqlitePool>();
 
-    for email_id in email_ids {
+    for &email_id in &email_ids {
         let email_info: Option<(i64, String, i64, String)> = sqlx::query_as(
             "SELECT e.account_id, e.remote_id, e.folder_id, f.path FROM emails e JOIN folders f ON e.folder_id = f.id WHERE e.id = ?"
         )
@@ -938,7 +1003,10 @@ pub async fn move_to_trash<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>, e
         tx.commit().await.map_err(|e| e.to_string())?;
     }
 
-    let _ = app_handle.emit("emails-updated", ());
+    if !email_ids.is_empty() {
+        let _ = app_handle.emit("emails-updated", EmailEvent::RemovedBulk { ids: email_ids });
+    }
+
     Ok(())
 }
 
@@ -1224,7 +1292,8 @@ pub async fn search_emails<R: tauri::Runtime>(
     account_id: Option<i64>,
     view: Option<String>,
     limit: Option<u32>,
-    offset: Option<u32>,
+    before_date: Option<String>,
+    before_id: Option<i64>,
 ) -> Result<Vec<Email>, String> {
     let pool = app_handle.state::<SqlitePool>();
     
@@ -1293,10 +1362,19 @@ pub async fn search_emails<R: tauri::Runtime>(
         };
     }
 
+    // Keyset Pagination
+    if let (Some(date), Some(id)) = (before_date, before_id) {
+        query_builder.push(" AND (e.date < ");
+        query_builder.push_bind(date.clone());
+        query_builder.push(" OR (e.date = ");
+        query_builder.push_bind(date);
+        query_builder.push(" AND e.id < ");
+        query_builder.push_bind(id);
+        query_builder.push("))");
+    }
+
     query_builder.push(" ORDER BY e.date DESC, e.id DESC LIMIT ");
     query_builder.push_bind(limit.unwrap_or(100) as i64);
-    query_builder.push(" OFFSET ");
-    query_builder.push_bind(offset.unwrap_or(0) as i64);
 
     let emails = query_builder
         .build_query_as::<Email>()

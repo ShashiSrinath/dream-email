@@ -6,6 +6,8 @@ import { EmailListToolbar } from "./_inbox/-components/email-list-toolbar";
 import { EmailListActions } from "./_inbox/-components/email-list-actions";
 import { EmailList } from "./_inbox/-components/email-list";
 
+import { useEmails } from "@/hooks/use-emails";
+
 const inboxSearchSchema = z.object({
   account_id: z.number().optional(),
   view: z.string().optional(),
@@ -28,12 +30,22 @@ export function InboxLayout() {
   const { emailId } = useParams({ strict: false });
   const selectedEmailId = emailId ? parseInt(emailId) : null;
 
-  const emails = useEmailStore((state) => state.emails);
-  const loadingEmails = useEmailStore((state) => state.loadingEmails);
-  const hasMore = useEmailStore((state) => state.hasMore);
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useEmails({ account_id, view, filter, search });
+
+  const emails = useMemo(() => data?.pages.flat() || [], [data]);
+  
+  // Sync emails to store for selection logic
+  useEffect(() => {
+    useEmailStore.setState({ emails });
+  }, [emails]);
+
   const selectedIds = useEmailStore((state) => state.selectedIds);
-  const fetchEmails = useEmailStore((state) => state.fetchEmails);
-  const fetchMoreEmails = useEmailStore((state) => state.fetchMoreEmails);
   const toggleSelect = useEmailStore((state) => state.toggleSelect);
   const selectRange = useEmailStore((state) => state.selectRange);
   const toggleSelectAll = useEmailStore((state) => state.toggleSelectAll);
@@ -45,10 +57,6 @@ export function InboxLayout() {
   const isAllSelected = emails.length > 0 && selectedIds.size === emails.length;
   const isSomeSelected =
     selectedIds.size > 0 && selectedIds.size < emails.length;
-
-  useEffect(() => {
-    fetchEmails({ account_id, view, filter, search });
-  }, [account_id, view, filter, search, fetchEmails]);
 
   // Sync local search with URL search param
   useEffect(() => {
@@ -108,13 +116,13 @@ export function InboxLayout() {
 
         <EmailList
           emails={emails}
-          loadingEmails={loadingEmails}
+          loadingEmails={isLoading || isFetchingNextPage}
           selectedIds={selectedIds}
           selectedEmailId={selectedEmailId}
           onToggleSelect={toggleSelect}
           onSelectRange={selectRange}
-          fetchNextPage={fetchMoreEmails}
-          hasNextPage={hasMore}
+          fetchNextPage={fetchNextPage}
+          hasNextPage={hasNextPage}
         />
       </div>
 

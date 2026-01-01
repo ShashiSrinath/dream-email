@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { format, isToday, isYesterday, isThisYear } from "date-fns";
 import { Paperclip, Check, Reply, Forward, Sparkles } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 import { cn } from "@/lib/utils";
 import { Email, useEmailStore } from "@/lib/store";
 import { useSettingsStore } from "@/lib/settings-store";
@@ -21,7 +21,7 @@ interface EmailListItemProps {
   measureElement: (el: HTMLElement | null) => void;
 }
 
-export function EmailListItem({
+export const EmailListItem = memo(function EmailListItem({
   email,
   isSelected,
   isUnread,
@@ -184,4 +184,4 @@ export function EmailListItem({
       </div>
     </Link>
   );
-}
+});

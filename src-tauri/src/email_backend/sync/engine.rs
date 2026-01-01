@@ -304,8 +304,9 @@ impl<R: tauri::Runtime> SyncEngine<R> {
         folder_id: i64,
         envelopes: Envelopes,
         notify: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<i64>, String> {
         let pool = app_handle.state::<SqlitePool>();
+        let mut saved_ids = Vec::new();
         let mut success_count = 0;
         let mut failure_count = 0;
         let mut last_error = None;
@@ -347,6 +348,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             match res {
                 Ok((email_id,)) => {
                     success_count += 1;
+                    saved_ids.push(email_id);
                     if notify && !flags.contains(&"seen".to_string()) {
                         info!("Scheduling notification for email: {}", env.subject);
                         let app_handle_clone = app_handle.clone();
@@ -384,7 +386,7 @@ impl<R: tauri::Runtime> SyncEngine<R> {
             return Err(format!("Failed to save any emails in batch. Last error: {}", last_error.unwrap_or_default()));
         }
 
-        Ok(())
+        Ok(saved_ids)
     }
 
     pub async fn start_idle_for_account(&self, account: Account) {
@@ -428,7 +430,6 @@ impl<R: tauri::Runtime> SyncEngine<R> {
 
             // Sync current state
             Self::sync_folder(&self.app_handle, &mut *client, account, "INBOX", Some("inbox".to_string()), &folder_data).await?;
-            let _ = self.app_handle.emit("emails-updated", account.id());
 
             let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
 
@@ -559,13 +560,17 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 info!("Fetched {} envelopes for sequence {}:{} in folder {}", batch_len, start, end, folder_name);
 
                 let is_initial = stored_uid_next == 0;
-                if let Err(e) = Self::save_envelopes(app_handle, account_id, folder_id, envelopes, !is_initial).await {
-                    error!("Critical failure saving envelopes for {}: {}. Aborting folder sync.", folder_name, e);
-                    return Err(e);
-                }
+                let _saved_ids = match Self::save_envelopes(app_handle, account_id, folder_id, envelopes, !is_initial).await {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        error!("Critical failure saving envelopes for {}: {}. Aborting folder sync.", folder_name, e);
+                        return Err(e);
+                    }
+                };
 
                 synced_count += batch_len;
-                let _ = app_handle.emit("emails-updated", account_id);
+                // Signal that new emails are available without spamming granular events
+                let _ = app_handle.emit("emails-updated", "bulk-add");
 
                 end = if start > 1 { start - 1 } else { 0 };
             }
@@ -586,11 +591,15 @@ impl<R: tauri::Runtime> SyncEngine<R> {
                 }
 
                 info!("Fetched {} new envelopes incrementally for folder {}", envelopes.len(), folder_name);
-                if let Err(e) = Self::save_envelopes(app_handle, account_id, folder_id, envelopes, true).await {
-                    error!("Critical failure saving incremental envelopes for {}: {}. Aborting folder sync.", folder_name, e);
-                    return Err(e);
-                }
-                let _ = app_handle.emit("emails-updated", account_id);
+                let _saved_ids = match Self::save_envelopes(app_handle, account_id, folder_id, envelopes, true).await {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        error!("Critical failure saving incremental envelopes for {}: {}. Aborting folder sync.", folder_name, e);
+                        return Err(e);
+                    }
+                };
+
+                let _ = app_handle.emit("emails-updated", "bulk-add");
             }
         } else {
             info!("Folder {} of {} is up to date", folder_name, account.email());

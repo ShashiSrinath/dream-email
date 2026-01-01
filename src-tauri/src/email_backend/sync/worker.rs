@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{Manager, Emitter};
+use crate::email_backend::emails::events::EmailEvent;
 use log::{info, error};
 use sqlx::SqlitePool;
 use tokio::time::sleep;
@@ -117,16 +118,28 @@ impl<R: tauri::Runtime> SyncWorker<R> {
 
         info!("Proactively summarizing {} emails", pending_summaries.len());
 
-        let mut updated = false;
         for (id, body_text) in pending_summaries {
+            let sender_address: Option<String> = sqlx::query_scalar("SELECT sender_address FROM emails WHERE id = ?")
+                .bind(id)
+                .fetch_one(&*pool)
+                .await
+                .ok();
+
             match crate::email_backend::llm::summarization::summarize_email_with_ai(app_handle, id, &body_text, false).await {
                 Ok(summary) => {
                     let _ = sqlx::query("UPDATE emails SET summary = ? WHERE id = ?")
-                        .bind(summary)
+                        .bind(&summary)
                         .bind(id)
                         .execute(&*pool)
                         .await;
-                    updated = true;
+                    
+                    let _ = app_handle.emit("emails-updated", EmailEvent::Updated {
+                        id,
+                        address: sender_address,
+                        flags: None,
+                        summary: Some(summary),
+                        thread_count: None,
+                    });
                 }
                 Err(e) => {
                     error!("Failed to summarize email {}: {}", id, e);
@@ -134,10 +147,6 @@ impl<R: tauri::Runtime> SyncWorker<R> {
             }
             // Polite delay
             sleep(Duration::from_millis(500)).await;
-        }
-
-        if updated {
-            let _ = app_handle.emit("emails-updated", ());
         }
 
         Ok(())

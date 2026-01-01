@@ -110,25 +110,13 @@ interface EmailState {
   fetchUnifiedCounts: () => Promise<void>;
 
   // Emails List
-  emails: Email[];
-  loadingEmails: boolean;
-  hasMore: boolean;
+  emails: Email[]; // We keep this for multi-selection reference if needed, but it's mostly unused now
   lastSearchParams: {
     account_id?: number;
     view?: string;
     filter?: string;
     search?: string;
   } | null;
-  fetchEmails: (
-    params: {
-      account_id?: number;
-      view?: string;
-      filter?: string;
-      search?: string;
-    },
-    isRefresh?: boolean,
-  ) => Promise<void>;
-  fetchMoreEmails: () => Promise<void>;
   refreshEmails: () => Promise<void>;
 
   // Selected Email
@@ -169,8 +157,6 @@ const initialState: Pick<
   | "accountFolders"
   | "unifiedCounts"
   | "emails"
-  | "loadingEmails"
-  | "hasMore"
   | "lastSearchParams"
   | "selectedEmailId"
   | "selectedIds"
@@ -181,8 +167,6 @@ const initialState: Pick<
   accountFolders: {},
   unifiedCounts: { primary: 0, sent: 0, spam: 0 },
   emails: [],
-  loadingEmails: false,
-  hasMore: true,
   lastSearchParams: null,
   selectedEmailId: null,
   selectedIds: new Set<number>(),
@@ -191,17 +175,25 @@ const initialState: Pick<
   },
 };
 
-const PAGE_SIZE = 50;
-
 export const useEmailStore = create<EmailState>((set, get) => ({
   ...initialState,
 
   fetchAccountsAndFolders: async () => {
     try {
       const accounts = (await invoke<Account[]>("get_accounts")) || [];
-      set({ accounts });
+      
+      // Only update accounts if they've changed
+      const currentAccounts = get().accounts;
+      const accountsChanged = accounts.length !== currentAccounts.length || 
+        accounts.some((a, i) => a.data.id !== currentAccounts[i]?.data.id || a.data.email !== currentAccounts[i]?.data.email);
+      
+      if (accountsChanged) {
+        set({ accounts });
+      }
 
       const foldersMap: Record<number, Folder[]> = {};
+      const currentFoldersMap = get().accountFolders;
+      let foldersChanged = false;
 
       // Parallelize folder fetching for all accounts
       await Promise.all(
@@ -211,11 +203,20 @@ export const useEmailStore = create<EmailState>((set, get) => ({
               account_id: account.data.id,
             });
             foldersMap[account.data.id] = folders;
+            
+            const currentFolders = currentFoldersMap[account.data.id] || [];
+            if (folders.length !== currentFolders.length || 
+                folders.some((f, i) => f.id !== currentFolders[i]?.id || f.unread_count !== currentFolders[i]?.unread_count)) {
+              foldersChanged = true;
+            }
           }
         }),
       );
 
-      set({ accountFolders: foldersMap });
+      if (foldersChanged || Object.keys(foldersMap).length !== Object.keys(currentFoldersMap).length) {
+        set({ accountFolders: foldersMap });
+      }
+      
       get().fetchUnifiedCounts();
     } catch (error) {
       console.error("Failed to fetch accounts/folders:", error);
@@ -226,183 +227,28 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     try {
       const counts = await invoke<any>("get_unified_counts");
       if (!counts) return;
-      set({
-        unifiedCounts: {
-          primary: counts.primary || 0,
-          sent: counts.sent || 0,
-          spam: counts.spam || 0,
-        },
-      });
+      
+      const current = get().unifiedCounts;
+      if (current.primary !== (counts.primary || 0) || 
+          current.sent !== (counts.sent || 0) || 
+          current.spam !== (counts.spam || 0)) {
+        set({
+          unifiedCounts: {
+            primary: counts.primary || 0,
+            sent: counts.sent || 0,
+            spam: counts.spam || 0,
+          },
+        });
+      }
     } catch (error) {
       console.error("Failed to fetch unified counts:", error);
     }
   },
 
-  fetchEmails: async (params, isRefresh = false) => {
-    const { emails: currentEmails, loadingEmails } = get();
-    if (loadingEmails && !isRefresh) return;
-
-    set({ loadingEmails: true, lastSearchParams: params });
-
-    // If refreshing, we want to fetch at least as many as we already have
-    // to avoid the list shrinking and causing scroll jumps
-    const limit = isRefresh
-      ? Math.max(currentEmails.length, PAGE_SIZE)
-      : PAGE_SIZE;
-
-    if (!isRefresh) {
-      set({ emails: [], hasMore: true, selectedIds: new Set() });
-    }
-
-    try {
-      let fetchedEmails: Email[] = [];
-
-      if (params.search) {
-        fetchedEmails = await invoke<Email[]>("search_emails", {
-          queryText: params.search,
-          accountId: params.account_id || null,
-          view: params.view || null,
-          limit,
-          offset: 0,
-        });
-      } else if (params.view === "drafts") {
-        // Fetch from drafts table and map to Email type
-        const accounts = get().accounts;
-        const drafts: any[] = [];
-
-        await Promise.all(
-          accounts.map(async (account) => {
-            if (account.data.id) {
-              const accountDrafts = await invoke<any[]>("get_drafts", {
-                account_id: account.data.id,
-              });
-              drafts.push(...accountDrafts);
-            }
-          }),
-        );
-
-        fetchedEmails = drafts.map((d) => ({
-          id: d.id, // Note: This might conflict with email IDs, but for now it's okay if we are only showing drafts
-          account_id: d.account_id,
-          folder_id: -1, // Special ID for drafts
-          remote_id: `draft-${d.id}`,
-          message_id: null,
-          thread_id: null,
-          thread_count: 1,
-          subject: d.subject || "(No Subject)",
-          sender_name: "Draft",
-          sender_address: d.to_address || "(No Recipient)",
-          recipient_to: d.to_address || null,
-          date: d.updated_at,
-          flags: JSON.stringify(["draft"]),
-          snippet: d.body_html
-            ? d.body_html.replace(/<[^>]*>/g, "").substring(0, 100)
-            : null,
-          summary: null,
-          has_attachments: false,
-          is_reply: false,
-          is_forward: false,
-        }));
-      } else {
-        fetchedEmails = await invoke<Email[]>("get_emails", {
-          account_id: params.account_id || null,
-          view: params.view || "primary",
-          filter: params.filter || null,
-          limit,
-          offset: 0,
-        });
-      }
-
-      if (isRefresh) {
-        // Smart Merge
-        set((state) => {
-          const emailMap = new Map(state.emails.map((e) => [e.id, e]));
-          let changed = false;
-
-          const merged = fetchedEmails.map((newEmail) => {
-            const existing = emailMap.get(newEmail.id);
-            if (existing) {
-              if (
-                existing.flags !== newEmail.flags ||
-                existing.subject !== newEmail.subject ||
-                existing.snippet !== newEmail.snippet ||
-                existing.summary !== newEmail.summary
-              ) {
-                changed = true;
-                return newEmail;
-              }
-              return existing;
-            }
-            changed = true;
-            return newEmail;
-          });
-
-          // If we fetched fewer items than we currently have,
-          // we should keep the ones we already have that were beyond the limit
-          // to avoid the list shrinking and causing scroll jumps.
-          if (state.emails.length > fetchedEmails.length) {
-            const extraItems = state.emails.slice(fetchedEmails.length);
-            merged.push(...extraItems);
-          }
-
-          if (merged.length !== state.emails.length) changed = true;
-
-          return changed
-            ? { emails: merged, hasMore: fetchedEmails.length === limit }
-            : {};
-        });
-      } else {
-        set({ emails: fetchedEmails, hasMore: fetchedEmails.length === limit });
-      }
-    } catch (error) {
-      console.error("Failed to fetch emails:", error);
-    } finally {
-      set({ loadingEmails: false });
-    }
-  },
-
-  fetchMoreEmails: async () => {
-    const { emails, loadingEmails, hasMore, lastSearchParams } = get();
-    if (loadingEmails || !hasMore || !lastSearchParams) return;
-
-    set({ loadingEmails: true });
-    try {
-      const newEmails = lastSearchParams.search
-        ? await invoke<Email[]>("search_emails", {
-            queryText: lastSearchParams.search,
-            accountId: lastSearchParams.account_id || null,
-            view: lastSearchParams.view || null,
-            limit: PAGE_SIZE,
-            offset: emails.length,
-          })
-        : await invoke<Email[]>("get_emails", {
-            account_id: lastSearchParams.account_id || null,
-            view: lastSearchParams.view || "primary",
-            filter: lastSearchParams.filter || null,
-            limit: PAGE_SIZE,
-            offset: emails.length,
-          });
-
-      set((state) => {
-        const existingIds = new Set(state.emails.map((e) => e.id));
-        const uniqueNewEmails = newEmails.filter((e) => !existingIds.has(e.id));
-        return {
-          emails: [...state.emails, ...uniqueNewEmails],
-          hasMore: newEmails.length === PAGE_SIZE,
-        };
-      });
-    } catch (error) {
-      console.error("Failed to fetch more emails:", error);
-    } finally {
-      set({ loadingEmails: false });
-    }
-  },
-
   refreshEmails: async () => {
-    const { lastSearchParams, fetchEmails } = get();
-    if (lastSearchParams) {
-      await fetchEmails(lastSearchParams, true);
-    }
+    // This is now handled by TanStack Query invalidation usually,
+    // but we can keep it for manual triggers if needed.
+    // For now we'll just keep the signature.
   },
 
   setSelectedEmailId: (id) => {
@@ -637,13 +483,17 @@ export const useEmailStore = create<EmailState>((set, get) => ({
         set({ isInitialized: true });
       });
 
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     const unlistenPromise = listen("emails-updated", () => {
-      get().fetchAccountsAndFolders();
-      get().refreshEmails();
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        get().fetchAccountsAndFolders();
+      }, 500);
     });
 
     return () => {
       unlistenPromise.then((unlisten) => unlisten());
+      if (timeout) clearTimeout(timeout);
     };
   },
 
