@@ -81,7 +81,7 @@ export function InboxLayout() {
   }, [view, filter, search]);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Email List */}
       <div className="w-1/3 border-r flex flex-col bg-muted/10 min-h-0">
         <EmailListToolbar
