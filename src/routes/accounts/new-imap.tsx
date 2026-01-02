@@ -1,14 +1,9 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { ChevronLeft, Info, Loader2, Mail, Server, ShieldCheck } from "lucide-react";
+import { CheckCircle2, ChevronLeft, Info, Loader2, Mail, Server, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -32,10 +27,14 @@ const imapFormSchema = z.object({
   password: z.string().min(1, "Password is required"),
   imap_host: z.string().min(1, "IMAP host is required"),
   imap_port: z.coerce.number().int().positive(),
+  imap_username: z.string().min(1, "IMAP username is required"),
   imap_encryption: z.enum(["tls", "starttls", "none"]),
   smtp_host: z.string().min(1, "SMTP host is required"),
   smtp_port: z.coerce.number().int().positive(),
+  smtp_username: z.string(),
+  smtp_password: z.string(),
   smtp_encryption: z.enum(["tls", "starttls", "none"]),
+  smtp_use_imap_credentials: z.boolean(),
 });
 
 type ImapFormValues = z.infer<typeof imapFormSchema>;
@@ -48,6 +47,8 @@ function NewImapComponent() {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
 
   const form = useForm<ImapFormValues>({
     resolver: zodResolver(imapFormSchema) as any,
@@ -57,12 +58,46 @@ function NewImapComponent() {
       password: "",
       imap_host: "",
       imap_port: 993,
+      imap_username: "",
       imap_encryption: "tls",
       smtp_host: "",
       smtp_port: 587,
+      smtp_username: "",
+      smtp_password: "",
       smtp_encryption: "starttls",
+      smtp_use_imap_credentials: true,
     },
   });
+
+  const smtpUseImapCredentials = form.watch("smtp_use_imap_credentials");
+
+  const syncEmailToUsername = (email: string) => {
+    if (!form.getValues("imap_username")) {
+      form.setValue("imap_username", email);
+    }
+    if (!form.getValues("smtp_username")) {
+      form.setValue("smtp_username", email);
+    }
+  };
+
+  const onVerify = async () => {
+    const isValid = await form.trigger();
+    if (!isValid) return;
+
+    try {
+      setError(null);
+      setIsVerified(false);
+      setIsVerifying(true);
+      const values = imapFormSchema.parse(form.getValues());
+      await invoke("verify_imap_smtp_credentials", { account: values });
+      setIsVerified(true);
+    } catch (err: any) {
+      console.error("Verification failed:", err);
+      setError(err.toString() || "Verification failed. Please check your settings.");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
   const onSubmit = async (values: ImapFormValues) => {
     try {
@@ -109,6 +144,16 @@ function NewImapComponent() {
           </Alert>
         )}
 
+        {isVerified && (
+          <Alert className="mb-8 border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertTitle>Success</AlertTitle>
+            <AlertDescription>
+              Connection verified successfully! You can now connect your account.
+            </AlertDescription>
+          </Alert>
+        )}
+
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
             <Card>
@@ -142,26 +187,20 @@ function NewImapComponent() {
                       <FormItem>
                         <FormLabel>Email Address</FormLabel>
                         <FormControl>
-                          <Input placeholder="john@example.com" {...field} />
+                          <Input
+                            placeholder="john@example.com"
+                            {...field}
+                            onChange={(e) => {
+                              field.onChange(e);
+                              syncEmailToUsername(e.target.value);
+                            }}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Password</FormLabel>
-                      <FormControl>
-                        <Input type="password" placeholder="••••••••" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
               </CardContent>
             </Card>
 
@@ -223,6 +262,32 @@ function NewImapComponent() {
                       )}
                     />
                   </div>
+                  <FormField
+                    control={form.control}
+                    name="imap_username"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Username</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Username" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Password</FormLabel>
+                        <FormControl>
+                          <Input type="password" placeholder="••••••••" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </CardContent>
               </Card>
 
@@ -283,12 +348,79 @@ function NewImapComponent() {
                       )}
                     />
                   </div>
+
+                  <FormField
+                    control={form.control}
+                    name="smtp_use_imap_credentials"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-sm">
+                        <div className="space-y-0.5">
+                          <FormLabel>Same as Incoming</FormLabel>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  {!smtpUseImapCredentials && (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <FormField
+                        control={form.control}
+                        name="smtp_username"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Username</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Username" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="smtp_password"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Password</FormLabel>
+                            <FormControl>
+                              <Input type="password" placeholder="••••••••" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
 
-            <div className="flex justify-end pt-4">
-              <Button type="submit" size="lg" disabled={isSubmitting} className="min-w-[150px]">
+            <div className="flex justify-end gap-3 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                disabled={isVerifying || isSubmitting}
+                onClick={onVerify}
+                className="min-w-[150px]"
+              >
+                {isVerifying ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...
+                  </>
+                ) : (
+                  <>
+                    Test Connection
+                  </>
+                )}
+              </Button>
+              <Button type="submit" size="lg" disabled={isSubmitting || isVerifying} className="min-w-[150px]">
                 {isSubmitting ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Connecting...

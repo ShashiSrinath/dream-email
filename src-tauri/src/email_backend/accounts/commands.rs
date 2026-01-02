@@ -4,6 +4,10 @@ use crate::email_backend::accounts::microsoft::login_with_microsoft as microsoft
 use crate::email_backend::accounts::imap_smtp::ImapSmtpAccount;
 use crate::email_backend::accounts::manager::{Account, AccountManager};
 use crate::email_backend::sync::SyncEngine;
+use email::backend::context::BackendContextBuilder;
+use email::imap::ImapContextBuilder;
+use email::smtp::SmtpContextBuilder;
+use email::backend::BackendBuilder;
 
 #[tauri::command]
 pub async fn login_with_google(app_handle: AppHandle) -> Result<(), String> {
@@ -14,6 +18,24 @@ pub async fn login_with_google(app_handle: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn login_with_microsoft(app_handle: AppHandle) -> Result<(), String> {
     microsoft_login(&app_handle).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn verify_imap_smtp_credentials(account: ImapSmtpAccount) -> Result<(), String> {
+    let account_enum = Account::ImapSmtp(account);
+    let (account_config, imap_config, smtp_config) = account_enum.get_configs()?;
+
+    // 1. Verify IMAP
+    let imap_ctx_builder = ImapContextBuilder::new(account_config.clone(), imap_config);
+    let _imap_context = BackendContextBuilder::build(imap_ctx_builder).await
+        .map_err(|e| format!("IMAP Error: {}", e))?;
+    
+    // 2. Verify SMTP
+    let smtp_ctx_builder = SmtpContextBuilder::new(account_config.clone(), smtp_config);
+    let _smtp_backend = BackendBuilder::new(account_config, smtp_ctx_builder).build().await
+        .map_err(|e| format!("SMTP Error: {}", e))?;
+
     Ok(())
 }
 

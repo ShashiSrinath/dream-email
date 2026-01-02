@@ -67,6 +67,7 @@ impl Account {
             }
             Account::ImapSmtp(a) => {
                 a.password = None;
+                a.smtp_password = None;
             }
         }
     }
@@ -171,7 +172,7 @@ impl Account {
                 let imap_config = Arc::new(ImapConfig {
                     host: imap_smtp.imap_host.clone(),
                     port: imap_smtp.imap_port,
-                    login: imap_smtp.email.clone(),
+                    login: imap_smtp.imap_username.clone(),
                     encryption: imap_encryption,
                     auth: ImapAuthConfig::Password(PasswordConfig(Secret::new_raw(imap_smtp.password.clone().unwrap_or_default()))),
                     ..Default::default()
@@ -183,12 +184,24 @@ impl Account {
                     _ => None,
                 };
 
+                let smtp_login = if imap_smtp.smtp_use_imap_credentials {
+                    imap_smtp.imap_username.clone()
+                } else {
+                    imap_smtp.smtp_username.clone()
+                };
+
+                let smtp_password = if imap_smtp.smtp_use_imap_credentials {
+                    imap_smtp.password.clone().unwrap_or_default()
+                } else {
+                    imap_smtp.smtp_password.clone().unwrap_or_default()
+                };
+
                 let smtp_config = Arc::new(SmtpConfig {
                     host: imap_smtp.smtp_host.clone(),
                     port: imap_smtp.smtp_port,
-                    login: imap_smtp.email.clone(),
+                    login: smtp_login,
                     encryption: smtp_encryption,
-                    auth: SmtpAuthConfig::Password(PasswordConfig(Secret::new_raw(imap_smtp.password.clone().unwrap_or_default()))),
+                    auth: SmtpAuthConfig::Password(PasswordConfig(Secret::new_raw(smtp_password))),
                     ..Default::default()
                 });
 
