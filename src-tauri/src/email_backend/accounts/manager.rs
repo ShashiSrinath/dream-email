@@ -115,11 +115,11 @@ impl Account {
             }
             Account::Microsoft(microsoft) => {
                 let client_id = env!("MICROSOFT_CLIENT_ID").to_string();
-                let client_secret = env!("MICROSOFT_CLIENT_SECRET").to_string();
+                let client_secret = option_env!("MICROSOFT_CLIENT_SECRET");
 
                 let oauth2_config = OAuth2Config {
                     client_id,
-                    client_secret: Some(Secret::new_raw(client_secret)),
+                    client_secret: client_secret.map(|s| Secret::new_raw(s.to_string())),
                     auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize".into(),
                     token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token".into(),
                     access_token: microsoft.access_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),
@@ -333,11 +333,11 @@ impl<R: tauri::Runtime> AccountManager<R> {
             }
             Account::Microsoft(microsoft) => {
                 let client_id = env!("MICROSOFT_CLIENT_ID").to_string();
-                let client_secret = env!("MICROSOFT_CLIENT_SECRET").to_string();
+                let client_secret = option_env!("MICROSOFT_CLIENT_SECRET");
 
                 let oauth2_config = OAuth2Config {
                     client_id,
-                    client_secret: Some(Secret::new_raw(client_secret)),
+                    client_secret: client_secret.map(|s| Secret::new_raw(s.to_string())),
                     auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize".into(),
                     token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token".into(),
                     access_token: microsoft.access_token.as_ref().map(|t| Secret::new_raw(t.clone())).unwrap_or_default(),

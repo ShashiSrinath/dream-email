@@ -25,7 +25,7 @@ pub struct MicrosoftOAuth2Config {
 impl MicrosoftOAuth2Config {
     pub fn new() -> Result<Self, String> {
         let client_id = env!("MICROSOFT_CLIENT_ID").to_string();
-        let client_secret = env!("MICROSOFT_CLIENT_SECRET").to_string();
+        let client_secret = option_env!("MICROSOFT_CLIENT_SECRET").map(|s| s.to_string());
 
         let mut config = OAuth2Config::default();
         config.client_id = client_id;
@@ -35,16 +35,19 @@ impl MicrosoftOAuth2Config {
         config.scopes = Scopes(vec![
             "https://outlook.office.com/IMAP.AccessAsUser.All".into(),
             "https://outlook.office.com/SMTP.Send".into(),
+            "User.Read".into(),
             "offline_access".into(),
             "openid".into(),
             "profile".into(),
             "email".into(),
         ]);
         config.pkce = true;
+        config.redirect_host = Some("127.0.0.1".into());
+        config.redirect_port = Some(11432);
 
         Ok(MicrosoftOAuth2Config {
             base: config,
-            client_secret: Some(client_secret),
+            client_secret,
         })
     }
 
@@ -92,23 +95,37 @@ impl MicrosoftOAuth2Config {
         let (access_token, refresh_token) = auth_code_grant
             .wait_for_redirection(&client, csrf_token)
             .await
-            .map_err(Error::WaitForOauthRedirectionError)?;
+            .map_err(|e| {
+                use std::error::Error as _;
+                let mut msg = format!("OAuth redirection failed: {}", e);
+                if let Some(source) = e.source() {
+                    msg.push_str(&format!(" (caused by: {})", source));
+                }
+                Error::GetAccountConfigNotFoundError(msg)
+            })?;
 
         // Fetch user info from Microsoft Graph API
         let user_info_client = reqwest::Client::new();
-        let user_info: serde_json::Value = user_info_client
+        let response = user_info_client
             .get("https://graph.microsoft.com/v1.0/me")
             .bearer_auth(&access_token)
             .send()
             .await
-            .map_err(|e| Error::GetAccountConfigNotFoundError(e.to_string()))?
+            .map_err(|e| Error::GetAccountConfigNotFoundError(format!("Failed to send userinfo request: {}", e)))?;
+
+        let status = response.status();
+        let user_info: serde_json::Value = response
             .json()
             .await
-            .map_err(|e| Error::GetAccountConfigNotFoundError(e.to_string()))?;
+            .map_err(|e| Error::GetAccountConfigNotFoundError(format!("Failed to parse userinfo JSON: {}", e)))?;
+
+        if !status.is_success() {
+            return Err(Error::GetAccountConfigNotFoundError(format!("Graph API error ({}): {}", status, user_info)));
+        }
 
         let email = user_info["mail"].as_str()
             .or_else(|| user_info["userPrincipalName"].as_str())
-            .ok_or_else(|| Error::GetAccountConfigNotFoundError("Email not found in userinfo".into()))?.to_string();
+            .ok_or_else(|| Error::GetAccountConfigNotFoundError(format!("Email not found in Graph response: {}", user_info)))?.to_string();
         let name = user_info["displayName"].as_str().map(|s| s.to_string());
         
         // Pictures are a bit more complex with Graph API, skipping for now or adding a placeholder

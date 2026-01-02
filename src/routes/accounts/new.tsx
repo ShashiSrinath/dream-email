@@ -20,22 +20,37 @@ function RouteComponent() {
   const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
-    const unlistenAdded = listen("google-account-added", async (event) => {
+    const unlistenGoogleAdded = listen("google-account-added", async (event) => {
       console.log("Google account added:", event.payload);
       await useEmailStore.getState().fetchAccountsAndFolders();
       setIsConnecting(false);
       navigate({ to: "/" });
     });
 
-    const unlistenError = listen("google-account-error", (event) => {
+    const unlistenGoogleError = listen("google-account-error", (event) => {
       console.error("Google account error:", event.payload);
       setError(event.payload as string);
       setIsConnecting(false);
     });
 
+    const unlistenMicrosoftAdded = listen("microsoft-account-added", async (event) => {
+      console.log("Microsoft account added:", event.payload);
+      await useEmailStore.getState().fetchAccountsAndFolders();
+      setIsConnecting(false);
+      navigate({ to: "/" });
+    });
+
+    const unlistenMicrosoftError = listen("microsoft-account-error", (event) => {
+      console.error("Microsoft account error:", event.payload);
+      setError(event.payload as string);
+      setIsConnecting(false);
+    });
+
     return () => {
-      unlistenAdded.then((f) => f());
-      unlistenError.then((f) => f());
+      unlistenGoogleAdded.then((f) => f());
+      unlistenGoogleError.then((f) => f());
+      unlistenMicrosoftAdded.then((f) => f());
+      unlistenMicrosoftError.then((f) => f());
     };
   }, [navigate]);
 
@@ -47,6 +62,18 @@ function RouteComponent() {
     } catch (error) {
       console.error("Failed to login with Google:", error);
       setError("Failed to initiate Google login. Please try again.");
+      setIsConnecting(false);
+    }
+  };
+
+  const handleMicrosoftLogin = async () => {
+    try {
+      setError(null);
+      setIsConnecting(true);
+      await invoke("login_with_microsoft");
+    } catch (error) {
+      console.error("Failed to login with Microsoft:", error);
+      setError("Failed to initiate Microsoft login. Please try again.");
       setIsConnecting(false);
     }
   };
