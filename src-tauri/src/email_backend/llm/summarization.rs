@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use log::{info, error, debug, warn};
+use log::{info, debug, warn};
 use sqlx::SqlitePool;
 use tauri::Manager;
 
@@ -12,10 +12,46 @@ pub async fn summarize_email_with_ai<R: tauri::Runtime>(
     debug!("Starting AI summarization for email: {} (force: {})", email_id, force);
     
     let pool = app_handle.state::<SqlitePool>();
+    let trimmed_body = body_text.trim();
 
-    // 1. Check for existing summary with same content to avoid redundant AI calls
+    // 1. Skip if body text is very small (less than 150 characters is usually not worth summarizing)
+    if trimmed_body.len() < 150 {
+        debug!("Skipping summarization for email {}: body text too small ({} chars)", email_id, trimmed_body.len());
+        return Ok("".to_string());
+    }
+
+    // 2. Skip if it appears to be an image-only email (e.g. newsletter where most content is in images)
+    if trimmed_body.len() < 800 {
+        let lower_body = trimmed_body.to_lowercase();
+        let image_indicators = [
+            "view this email in your browser",
+            "having trouble viewing this email",
+            "view as a web page",
+            "click here if you are unable to see the images",
+            "images not displaying",
+            "displaying correctly? view it in your browser",
+            "viewing this email as a webpage",
+            "enable images to see this email",
+        ];
+        
+        if image_indicators.iter().any(|&ind| lower_body.contains(ind)) {
+             let has_images: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM attachments WHERE email_id = ? AND mime_type LIKE 'image/%' LIMIT 1")
+                .bind(email_id)
+                .fetch_optional(&*pool)
+                .await
+                .unwrap_or(None)
+                .is_some();
+                
+             if has_images {
+                 debug!("Skipping summarization for email {}: detected as image-only content", email_id);
+                 return Ok("".to_string());
+             }
+        }
+    }
+
+    // 3. Check for existing summary with same content to avoid redundant AI calls
     if !force {
-        let existing_summary: Option<String> = sqlx::query_scalar("SELECT summary FROM emails WHERE body_text = ? AND summary IS NOT NULL LIMIT 1")
+        let existing_summary: Option<String> = sqlx::query_scalar("SELECT summary FROM emails WHERE body_text = ? AND summary IS NOT NULL AND summary != '' LIMIT 1")
             .bind(body_text)
             .fetch_optional(&*pool)
             .await
