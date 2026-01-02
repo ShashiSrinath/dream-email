@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Email, useEmailStore } from "@/lib/store";
 import { useSettingsStore } from "@/lib/settings-store";
 import { SenderAvatar } from "@/components/sender-avatar";
+import { Badge } from "@/components/ui/badge";
 
 interface EmailListItemProps {
   email: Email;
@@ -33,7 +34,7 @@ export const EmailListItem = memo(function EmailListItem({
 }: EmailListItemProps) {
   const isDraft = email.folder_id === -1;
   const setComposer = useEmailStore(state => state.setComposer);
-  
+
   // Granular store subscriptions
   const account = useEmailStore(state => state.accountsMap[email.account_id]);
   const aiEnabled = useSettingsStore(state => state.settings.aiEnabled);
@@ -98,13 +99,13 @@ export const EmailListItem = memo(function EmailListItem({
       )}
 
       <div className="flex flex-col items-center justify-center pt-0.5 shrink-0">
-        <div 
+        <div
           onClick={handleAvatarClick}
           className="relative cursor-pointer"
           role="checkbox"
           aria-checked={isSelected}
         >
-          <SenderAvatar 
+          <SenderAvatar
             address={email.sender_address}
             name={email.sender_name}
             avatarClassName={cn(
@@ -112,11 +113,11 @@ export const EmailListItem = memo(function EmailListItem({
               isSelected ? "scale-0 opacity-0" : "scale-100 opacity-100"
             )}
           />
-          
+
           <div className={cn(
             "absolute inset-0 flex items-center justify-center rounded-full transition-all duration-400 ease-in-out border-2",
-            isSelected 
-              ? "bg-primary border-primary scale-100 opacity-100" 
+            isSelected
+              ? "bg-primary border-primary scale-100 opacity-100"
               : "bg-background border-muted-foreground/30 scale-50 opacity-0 group-hover:scale-100 group-hover:opacity-100"
           )}>
             <Check className={cn(
@@ -131,12 +132,12 @@ export const EmailListItem = memo(function EmailListItem({
         <div className="flex justify-between items-baseline">
           <div className="flex items-center gap-2 overflow-hidden">
             <span className={cn(
-              "truncate text-[14px] transition-colors", 
+              "truncate text-[14px] transition-colors",
               isUnread ? "font-bold text-foreground" : "font-semibold text-muted-foreground group-hover:text-foreground"
             )}>
               {email.sender_name || email.sender_address}
             </span>
-            
+
             {email.thread_count && email.thread_count > 1 && (
               <span className="text-[10px] bg-muted/80 px-1.5 py-0.5 rounded-md font-bold text-muted-foreground/70 tabular-nums">
                 {email.thread_count}
@@ -144,13 +145,16 @@ export const EmailListItem = memo(function EmailListItem({
             )}
 
             {account && (
-              <div 
+              <Badge
+                variant="outline"
+                className="text-[9px] px-2 py-0 h-4 border-muted-foreground/30 text-muted-foreground/60 font-medium bg-transparent truncate"
                 title={account.data.email}
-                className="w-1.5 h-1.5 rounded-full bg-primary/30 flex-shrink-0" 
-              />
+              >
+                {account.data.email}
+              </Badge>
             )}
           </div>
-          
+
           <div className="flex items-center gap-2 shrink-0">
             {email.has_attachments && <Paperclip className="w-3 h-3 text-muted-foreground/60" />}
             <span className="text-[11px] font-medium text-muted-foreground/70 whitespace-nowrap tabular-nums">
@@ -163,7 +167,7 @@ export const EmailListItem = memo(function EmailListItem({
           {email.is_reply && <Reply className="w-3 h-3 text-primary/60 shrink-0" />}
           {email.is_forward && <Forward className="w-3 h-3 text-primary/60 shrink-0" />}
           <div className={cn(
-            "text-[13px] truncate flex-1", 
+            "text-[13px] truncate flex-1",
             isUnread ? "text-foreground/90 font-medium" : "text-muted-foreground font-normal"
           )}>
             {email.subject || "(No Subject)"}

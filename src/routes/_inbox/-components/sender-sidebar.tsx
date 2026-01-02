@@ -1,15 +1,16 @@
 import { useSenderInfo } from "@/hooks/use-sender-info";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Github, Linkedin, Twitter, Globe, MapPin, Briefcase, History, Building2, RotateCcw, Edit2 } from "lucide-react";
+import { Github, Linkedin, Twitter, Globe, MapPin, Briefcase, History, Building2, RotateCcw, Edit2, Copy } from "lucide-react";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Email, Domain, Sender } from "@/lib/store";
 import { format } from "date-fns";
 import { Link } from "@tanstack/react-router";
 import { SenderAvatar } from "@/components/sender-avatar";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useEmailStore, Email, Domain, Sender } from "@/lib/store";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -30,6 +31,7 @@ export function SenderSidebar({ address, name: initialName }: { address: string;
   const [domainInfo, setDomainInfo] = useState<Domain | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const accountsMap = useEmailStore(state => state.accountsMap);
 
   useEffect(() => {
     setSender(initialSender || null);
@@ -148,6 +150,23 @@ export function SenderSidebar({ address, name: initialName }: { address: string;
             />
             <div className="space-y-1 w-full min-w-0 px-2">
               <h3 className="font-bold text-lg break-words line-clamp-2">{initialName || sender?.name || address}</h3>
+              <div className="pt-1 pb-2 min-w-0 flex items-center justify-center gap-1 group/email">
+                <code className="text-[11px] bg-muted/50 text-muted-foreground px-2 py-0.5 rounded block break-all border border-border/50 leading-relaxed truncate max-w-[220px]" title={address}>
+                  {address}
+                </code>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 group-hover/email:opacity-100 transition-opacity text-muted-foreground hover:text-primary shrink-0"
+                  onClick={() => {
+                    navigator.clipboard.writeText(address);
+                    toast.success("Email copied to clipboard");
+                  }}
+                  title="Copy email address"
+                >
+                  <Copy className="w-3 h-3" />
+                </Button>
+              </div>
               {sender?.job_title && (
                 <p className="text-sm text-muted-foreground flex items-center justify-center gap-1.5 truncate">
                   <Briefcase className="w-3.5 h-3.5 shrink-0" />
@@ -254,13 +273,6 @@ export function SenderSidebar({ address, name: initialName }: { address: string;
             </div>
           )}
 
-          <div className="pt-4 min-w-0">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">Email Address</h4>
-            <code className="text-[11px] bg-muted px-2 py-1 rounded block break-all border leading-relaxed" title={address}>
-              {address}
-            </code>
-          </div>
-
           {recentEmails.length > 0 && (
             <div className="space-y-3 pt-4 border-t min-w-0">
               <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
@@ -268,21 +280,35 @@ export function SenderSidebar({ address, name: initialName }: { address: string;
                 Recent Threads
               </h4>
               <div className="space-y-3 min-w-0">
-                {recentEmails.map((email) => (
-                  <Link
-                    key={email.id}
-                    to="/email/$emailId"
-                    params={{ emailId: email.id.toString() }}
-                    className="block group/item min-w-0"
-                  >
-                    <div className="text-[13px] font-medium break-words line-clamp-2 group-hover/item:text-primary transition-colors leading-snug">
-                      {email.subject || "(No Subject)"}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                      {format(new Date(email.date), "MMM d, yyyy")}
-                    </div>
-                  </Link>
-                ))}
+                {recentEmails.map((email) => {
+                  const account = accountsMap[email.account_id];
+                  return (
+                    <Link
+                      key={email.id}
+                      to="/email/$emailId"
+                      params={{ emailId: email.id.toString() }}
+                      className="block group/item min-w-0"
+                    >
+                      <div className="flex items-start gap-2 mb-0.5">
+                        <div className="text-[13px] font-medium break-words line-clamp-2 group-hover/item:text-primary transition-colors leading-snug flex-1">
+                          {email.subject || "(No Subject)"}
+                        </div>
+                        {account && (
+                          <Badge 
+                            variant="outline" 
+                            className="text-[8px] px-2 py-0 h-3.5 border-muted-foreground/15 text-muted-foreground/50 font-normal bg-transparent truncate max-w-[80px] shrink-0 mt-0.5"
+                            title={account.data.email}
+                          >
+                            {account.data.email}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {format(new Date(email.date), "MMM d, yyyy")}
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           )}
