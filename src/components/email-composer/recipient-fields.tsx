@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EmailFormValues } from "./email-composer";
+import { RecipientInput } from "./recipient-input";
 
 interface RecipientFieldsProps {
   register: UseFormRegister<EmailFormValues>;
@@ -90,14 +91,20 @@ export function RecipientFields({
       {/* To */}
       <div className="flex items-center px-6 py-1.5 gap-4 relative group transition-colors hover:bg-muted/30">
         <Label htmlFor="to" className="w-16 text-[11px] font-semibold uppercase tracking-wider text-foreground/40">To</Label>
-        <Input
-          id="to"
-          {...register("to")}
-          autoFocus
-          className="flex-1 border-none shadow-none focus-visible:ring-0 px-3 pr-20 -ml-3 h-10 text-[14px] font-medium placeholder:text-muted-foreground/30 transition-all bg-transparent"
-          placeholder="recipient@example.com"
+        <Controller
+          name="to"
+          control={control}
+          render={({ field }) => (
+            <RecipientInput
+              placeholder="recipient@example.com"
+              value={field.value}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              autoFocus
+            />
+          )}
         />
-        <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1">
+        <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1 z-10">
           {!showCc && (
             <button
               type="button"
@@ -124,13 +131,19 @@ export function RecipientFields({
       {showCc && (
         <div className="flex items-center px-6 py-1.5 gap-4 group animate-in fade-in slide-in-from-top-1 duration-200 transition-colors hover:bg-muted/30 relative">
           <Label htmlFor="cc" className="w-16 text-[11px] font-semibold uppercase tracking-wider text-foreground/40">Cc</Label>
-          <Input
-            id="cc"
-            {...register("cc")}
-            className="flex-1 border-none shadow-none focus-visible:ring-0 px-3 pr-20 -ml-3 h-10 text-[14px] font-medium placeholder:text-muted-foreground/30 bg-transparent"
-            placeholder="carbon-copy@example.com"
+          <Controller
+            name="cc"
+            control={control}
+            render={({ field }) => (
+                <RecipientInput
+                    placeholder="carbon-copy@example.com"
+                    value={field.value || ""}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                />
+            )}
           />
-          <div className="absolute right-6 top-1/2 -translate-y-1/2">
+          <div className="absolute right-6 top-1/2 -translate-y-1/2 z-10">
             <Button
                 type="button"
                 variant="ghost"
@@ -151,13 +164,19 @@ export function RecipientFields({
       {showBcc && (
         <div className="flex items-center px-6 py-1.5 gap-4 group animate-in fade-in slide-in-from-top-1 duration-200 transition-colors hover:bg-muted/30 relative">
           <Label htmlFor="bcc" className="w-16 text-[11px] font-semibold uppercase tracking-wider text-foreground/40">Bcc</Label>
-          <Input
-            id="bcc"
-            {...register("bcc")}
-            className="flex-1 border-none shadow-none focus-visible:ring-0 px-3 pr-20 -ml-3 h-10 text-[14px] font-medium placeholder:text-muted-foreground/30 bg-transparent"
-            placeholder="blind-carbon-copy@example.com"
+          <Controller
+            name="bcc"
+            control={control}
+            render={({ field }) => (
+                <RecipientInput
+                    placeholder="blind-carbon-copy@example.com"
+                    value={field.value || ""}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                />
+            )}
           />
-          <div className="absolute right-6 top-1/2 -translate-y-1/2">
+          <div className="absolute right-6 top-1/2 -translate-y-1/2 z-10">
             <Button
                 type="button"
                 variant="ghost"

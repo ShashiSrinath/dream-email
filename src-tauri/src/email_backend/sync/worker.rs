@@ -68,6 +68,15 @@ impl<R: tauri::Runtime> SyncWorker<R> {
                     }
                     sleep(Duration::from_secs(120)).await;
                 });
+
+                // Contact Sync
+                let app_handle_contacts = app_handle.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::email_backend::enrichment::commands::sync_contacts_internal(&app_handle_contacts).await {
+                        error!("Error during background contact sync: {}", e);
+                    }
+                    sleep(Duration::from_secs(1800)).await; // Sync every 30 minutes
+                });
             }
         });
     }

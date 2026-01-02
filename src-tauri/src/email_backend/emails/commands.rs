@@ -1185,17 +1185,17 @@ pub async fn send_email<R: tauri::Runtime>(
 
     let mut builder = MessageBuilder::new();
     builder = builder.from(account.email());
-    builder = builder.to(to);
+    builder = builder.to(to.clone());
 
-    if let Some(cc_val) = cc {
+    if let Some(ref cc_val) = cc {
         if !cc_val.trim().is_empty() {
-            builder = builder.cc(cc_val);
+            builder = builder.cc(cc_val.clone());
         }
     }
 
-    if let Some(bcc_val) = bcc {
+    if let Some(ref bcc_val) = bcc {
         if !bcc_val.trim().is_empty() {
-            builder = builder.bcc(bcc_val);
+            builder = builder.bcc(bcc_val.clone());
         }
     }
 
@@ -1281,6 +1281,24 @@ pub async fn send_email<R: tauri::Runtime>(
             let _ = SyncEngine::refresh_folder(&app_handle, account_id, folder_id).await;
          }
     }
+
+    // Save recipients as contacts
+    let mut all_recipients = Vec::new();
+    all_recipients.push(to);
+    if let Some(cc_val) = cc {
+        all_recipients.push(cc_val);
+    }
+    if let Some(bcc_val) = bcc {
+        all_recipients.push(bcc_val);
+    }
+    
+    // Flatten comma separated lists
+    let flat_recipients: Vec<String> = all_recipients.iter()
+        .flat_map(|s| s.split(',').map(|p| p.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let _ = crate::email_backend::enrichment::commands::save_recipients_as_contacts(&app_handle, flat_recipients).await;
 
     Ok(())
 }

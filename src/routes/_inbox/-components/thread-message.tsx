@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { useEmailStore, Attachment, EmailContent, Email } from "@/lib/store";
 import { useSettingsStore } from "@/lib/settings-store";
 import { SenderAvatar } from "@/components/sender-avatar";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AttachmentsList } from "./attachments-list";
 import { EmailBody } from "./email-body";

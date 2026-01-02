@@ -5,8 +5,223 @@ use std::collections::HashMap;
 use crate::email_backend::enrichment::types::{Sender, Domain};
 use crate::email_backend::enrichment::providers::*;
 use crate::email_backend::enrichment::people::*;
-use crate::email_backend::accounts::manager::AccountManager;
+use crate::email_backend::accounts::manager::{AccountManager, Account};
 use crate::email_backend::emails::commands::Email;
+
+#[tauri::command]
+pub async fn search_contacts<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    query: String,
+    limit: u32,
+) -> Result<Vec<Sender>, String> {
+    let pool = app_handle.state::<SqlitePool>();
+    let clean_query = query.trim();
+    if clean_query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Tokenize query for flexible FTS matching
+    // We wrap tokens in double quotes to handle special characters like dots in email addresses
+    let tokens: Vec<_> = clean_query
+        .split_whitespace()
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("\"{}\"*", t.replace("\"", "\"\"")))
+        .collect();
+    
+    let fts_query = if tokens.len() > 1 {
+        tokens.join(" ")
+    } else if !tokens.is_empty() {
+        tokens[0].clone()
+    } else {
+        return Ok(Vec::new());
+    };
+
+    // Robust search: Try FTS first, but also include LIKE-based matches to ensure nothing is missed
+    // We use a UNION to combine FTS matches and LIKE matches, then sort them.
+    let senders = sqlx::query_as::<_, Sender>(
+        "WITH matches AS (
+            -- FTS matches
+            SELECT s.address, 1 as fts_match, f.rank
+            FROM senders s
+            JOIN senders_fts f ON s.rowid = f.rowid
+            WHERE senders_fts MATCH ?
+            
+            UNION
+            
+            -- LIKE matches (fallback/robustness)
+            SELECT address, 0 as fts_match, 0 as rank
+            FROM senders
+            WHERE name LIKE ? OR address LIKE ?
+         )
+         SELECT s.* FROM senders s
+         JOIN matches m ON s.address = m.address
+         GROUP BY s.address
+         ORDER BY 
+            (s.address = ?) DESC,
+            (s.name LIKE ?) DESC,
+            (s.name LIKE ?) DESC,
+            s.is_contact DESC,
+            m.fts_match DESC,
+            m.rank
+         LIMIT ?"
+    )
+    .bind(&fts_query)
+    .bind(format!("%{}%", clean_query)) // LIKE name
+    .bind(format!("%{}%", clean_query)) // LIKE address
+    .bind(clean_query) // Exact email
+    .bind(format!("{}%", clean_query)) // Name starts with
+    .bind(format!("%{}%", clean_query)) // Name contains
+    .bind(limit as i64)
+    .fetch_all(&*pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(senders)
+}
+
+#[tauri::command]
+pub async fn sync_contacts<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    sync_contacts_internal(&app_handle).await
+}
+
+pub async fn sync_contacts_internal<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    log::info!("Starting background contact sync");
+    let manager = AccountManager::new(app_handle).await?;
+    let registry = manager.load().await?;
+    let pool = app_handle.state::<SqlitePool>();
+
+    for account in registry.accounts {
+        if let Account::Google(google) = account {
+            let email = google.email.clone();
+            let token = match manager.refresh_access_token(&email).await {
+                Ok(t) => t,
+                Err(e) => {
+                    log::error!("Failed to refresh token for contact sync ({}): {}", email, e);
+                    continue;
+                }
+            };
+
+            if let Err(e) = sync_google_contacts(app_handle, &email, &token).await {
+                log::error!("Failed to sync Google contacts for {}: {}", email, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn sync_google_contacts<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    account_email: &str,
+    token: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let pool = app_handle.state::<SqlitePool>();
+    
+    let mut next_page_token: Option<String> = None;
+    let mut total_synced = 0;
+
+    loop {
+        let mut request = client.get("https://people.googleapis.com/v1/people/me/connections")
+            .query(&[
+                ("personFields", "names,emailAddresses,photos"),
+                ("pageSize", "100"),
+            ])
+            .bearer_auth(token);
+
+        if let Some(t) = &next_page_token {
+            request = request.query(&[("pageToken", t)]);
+        }
+
+        let resp = request.send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            let err = resp.text().await.unwrap_or_default();
+            return Err(format!("Google People API error: {}", err));
+        }
+
+        let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        
+        if let Some(connections) = data["connections"].as_array() {
+            for person in connections {
+                let name = person["names"][0]["displayName"].as_str().map(|s| s.to_string());
+                let avatar_url = person["photos"].as_array()
+                    .and_then(|photos| photos.iter().find(|p| p["metadata"]["primary"].as_bool().unwrap_or(false) || p["metadata"]["source"]["type"].as_str() == Some("CONTACT")))
+                    .and_then(|p| p["url"].as_str())
+                    .map(|s| s.to_string());
+
+                if let Some(emails) = person["emailAddresses"].as_array() {
+                    for email_data in emails {
+                        if let Some(address) = email_data["value"].as_str() {
+                            let address = address.to_lowercase();
+                            
+                            // Upsert into senders
+                            sqlx::query(
+                                "INSERT INTO senders (address, name, avatar_url, is_contact, account_email, last_synced_at)
+                                 VALUES (?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
+                                 ON CONFLICT(address) DO UPDATE SET
+                                    name = COALESCE(excluded.name, senders.name),
+                                    avatar_url = COALESCE(excluded.avatar_url, senders.avatar_url),
+                                    is_contact = 1,
+                                    account_email = excluded.account_email,
+                                    last_synced_at = CURRENT_TIMESTAMP,
+                                    updated_at = CURRENT_TIMESTAMP"
+                            )
+                            .bind(&address)
+                            .bind(&name)
+                            .bind(&avatar_url)
+                            .bind(account_email)
+                            .execute(&*pool)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                            
+                            total_synced += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        next_page_token = data["nextPageToken"].as_str().map(|s| s.to_string());
+        if next_page_token.is_none() {
+            break;
+        }
+    }
+
+    log::info!("Synced {} contacts for {}", total_synced, account_email);
+    Ok(())
+}
+
+pub async fn save_recipients_as_contacts<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    recipients: Vec<String>,
+) -> Result<(), String> {
+    let pool = app_handle.state::<SqlitePool>();
+    
+    for recipient in recipients {
+        let recipient = recipient.trim().to_lowercase();
+        if recipient.is_empty() { continue; }
+
+        // We use INSERT OR IGNORE because we don't want to overwrite 
+        // existing enriched or synced contacts, just ensure they exist.
+        // We set is_contact=1 because these are people we've interacted with.
+        let _ = sqlx::query(
+            "INSERT INTO senders (address, is_contact) 
+             VALUES (?, 1) 
+             ON CONFLICT(address) DO UPDATE SET 
+                is_contact = 1,
+                updated_at = CURRENT_TIMESTAMP"
+        )
+        .bind(&recipient)
+        .execute(&*pool)
+        .await;
+    }
+    
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn get_emails_by_sender<R: tauri::Runtime>(
@@ -475,6 +690,9 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         is_verified,
         is_personal_email,
         is_automated_mailer,
+        is_contact: false,
+        account_email: None,
+        last_synced_at: None,
         ai_last_enriched_at,
         last_enriched_at: Some(now),
         created_at: Some(now),
@@ -485,9 +703,9 @@ async fn enrich_sender_internal<R: tauri::Runtime>(
         "INSERT INTO senders (
             address, name, avatar_url, job_title, company, bio, location,
             github_handle, twitter_handle, linkedin_handle, website_url,
-            is_verified, is_personal_email, is_automated_mailer, ai_last_enriched_at, last_enriched_at
+            is_verified, is_personal_email, is_automated_mailer, is_contact, ai_last_enriched_at, last_enriched_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
          ON CONFLICT(address) DO UPDATE SET
             name = COALESCE(excluded.name, senders.name),
             avatar_url = excluded.avatar_url,
